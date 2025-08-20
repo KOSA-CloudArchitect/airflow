@@ -90,7 +90,7 @@ with DAG(
     dag_id="airflow_to_kafka_connectivity_test",
     # days_ago(1) 대신 datetime.now() - timedelta(days=1)를 사용합니다.
     start_date=datetime.now() - timedelta(days=1),
-    schedule_interval=None,
+    schedule=None,
     catchup=False,
     tags=["kafka", "connectivity", "test"],
     description="Airflow에서 Kafka로의 연결 및 메시지 전송 테스트"
