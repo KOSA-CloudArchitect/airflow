@@ -1,6 +1,7 @@
 from airflow import DAG
 from airflow.decorators import task
-from airflow.utils.dates import days_ago
+# days_ago 대신 datetime 모듈을 사용합니다.
+from datetime import datetime, timedelta
 import os
 import uuid
 from kafka import KafkaProducer
@@ -87,7 +88,8 @@ def verify_environment():
 # DAG 정의
 with DAG(
     dag_id="airflow_to_kafka_connectivity_test",
-    start_date=days_ago(1),
+    # days_ago(1) 대신 datetime.now() - timedelta(days=1)를 사용합니다.
+    start_date=datetime.now() - timedelta(days=1),
     schedule_interval=None,
     catchup=False,
     tags=["kafka", "connectivity", "test"],
