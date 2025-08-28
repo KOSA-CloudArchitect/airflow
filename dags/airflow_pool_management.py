@@ -29,7 +29,7 @@ dag = DAG(
     'airflow_pool_management',
     default_args=default_args,
     description='Airflow 풀 관리 및 모니터링',
-    schedule_interval='@daily',  # 매일 실행
+    schedule='@daily',  # 매일 실행 (Airflow 3.0+ 에서 schedule_interval -> schedule)
     catchup=False,
     tags=['hihypipe', 'pool-management', 'admin'],
 )
@@ -191,6 +191,7 @@ def monitor_pool_usage(**context):
             
             logging.info(f"풀 사용 현황: {usage_info}")
             
+            usage_percentage = usage_info.get("usage_percentage", 0)
             # 경고 조건 확인
             if usage_percentage > 80:
                 logging.warning(f"풀 사용률이 높습니다: {usage_percentage:.1f}%")
