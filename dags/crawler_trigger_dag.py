@@ -2,7 +2,7 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.http.operators.http import HttpOperator
 from airflow.providers.apache.kafka.sensors.kafka import AwaitMessageSensor
-from airflow.utils.dates import days_ago
+from datetime import datetime, timedelta
 import logging
 import json
 
@@ -22,7 +22,7 @@ def kafka_message_check(message, **context):
 with DAG(
     dag_id="crawler_trigger_dag",
     default_args={"owner": "airflow"},
-    start_date=days_ago(1),
+    start_date=datetime(2025, 8, 30),
     schedule_interval=None,
     catchup=False,
     tags=["crawler", "kafka"],
