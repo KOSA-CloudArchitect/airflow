@@ -23,7 +23,7 @@ with DAG(
     dag_id="crawler_trigger_dag",
     default_args={"owner": "airflow"},
     start_date=datetime(2025, 8, 30),
-    schedule_interval=None,
+    schedule=None,
     catchup=False,
     tags=["crawler", "kafka"],
 ) as dag:
