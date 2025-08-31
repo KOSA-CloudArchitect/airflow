@@ -1,6 +1,6 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.providers.http.operators.http import SimpleHttpOperator
+from airflow.providers.http.operators.http import HttpOperator
 from airflow.providers.apache.kafka.sensors.kafka import KafkaSensor
 from airflow.utils.dates import days_ago
 import logging
@@ -33,7 +33,7 @@ with DAG(
         python_callable=log_request,
     )
 
-    call_crawler = SimpleHttpOperator(
+    call_crawler = HttpOperator(
         task_id="call_crawler",
         http_conn_id="crawler_local",
         endpoint="/collect",
