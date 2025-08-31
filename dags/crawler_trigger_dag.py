@@ -1,7 +1,7 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.http.operators.http import HttpOperator
-from airflow.providers.apache.kafka.sensors.kafka import KafkaSensor
+from airflow.providers.apache.kafka.sensors.kafka import AwaitMessageSensor
 from airflow.utils.dates import days_ago
 import logging
 import json
@@ -42,12 +42,12 @@ with DAG(
         headers={"Content-Type": "application/json"},
     )
 
-    wait_for_done = KafkaSensor(
+    wait_for_done = AwaitMessageSensor(
         task_id="wait_for_done",
         topics=["crawler_done"],    # 완료 이벤트를 보내는 topic
         apply_function=kafka_message_check,
         poke_interval=5,
-        timeout=600,
+        timeout=1200,
         pool="crawler_pool",        # 여기서만 pool 점유
     )
 
