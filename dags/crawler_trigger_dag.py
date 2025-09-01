@@ -44,7 +44,8 @@ with DAG(
 
     wait_for_done = AwaitMessageSensor(
         task_id="wait_for_done",
-        topics=["crawler_done"],    # 완료 이벤트를 보내는 topic
+        kafka_config_id = "crawl_kafka_job",
+        topics=["crawler_done_topic"],    # 완료 이벤트를 보내는 topic
         apply_function=kafka_message_check,
         pool="crawler_pool",        # 여기서만 pool 점유
     )
