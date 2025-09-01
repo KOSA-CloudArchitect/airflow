@@ -46,8 +46,6 @@ with DAG(
         task_id="wait_for_done",
         topics=["crawler_done"],    # 완료 이벤트를 보내는 topic
         apply_function=kafka_message_check,
-        poke_interval=5,
-        timeout=1200,
         pool="crawler_pool",        # 여기서만 pool 점유
     )
 
