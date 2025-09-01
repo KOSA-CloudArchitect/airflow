@@ -35,8 +35,10 @@ with DAG(
 
     call_crawler = HttpOperator(
         task_id="call_crawler",
-        http_conn_id="crawler_local",
-        endpoint="/collect",
+        # http_conn_id="crawler_local",
+        # endpoint="/collect",
+        http_conn_id="httpbin",   # Airflow Connection에서 httpbin 등록 필요
+        endpoint="post",
         method="POST",
         data='{"job_id":"{{ dag_run.conf.get("job_id") }}"}',
         headers={"Content-Type": "application/json"},
