@@ -90,11 +90,6 @@ with DAG(
         kafka_config_id="crawl_kafka_job",
         topics=["crawler-done-topic"],
         apply_function="include.kafka_filters.kafka_message_check",
-        consumer_config={
-            "group.id": "airflow-crawler-done-{{ ts_nodash }}",  # 매 런마다 고유
-            "enable.auto.commit": False,
-            "auto.offset.reset": "earliest",
-        },
         pool="crawler_pool"
     )
     # wait_for_done = AwaitMessageSensor(
