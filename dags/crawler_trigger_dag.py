@@ -16,6 +16,23 @@ def log_job_id_callback(context):
     job_id = (dag_run.conf or {}).get("job_id") if dag_run else None
     logging.info(f"[call_crawler] job_id={job_id}")
 
+def kafka_message_check(expected_job_id, message):
+    raw = message.value()
+    text = raw.decode("utf-8","replace") if isinstance(raw,(bytes,bytearray)) else str(raw)
+    print("[kafka_sensor] received:", text[:1000], flush=True)
+
+    try:
+        payload = json.loads(text)
+    except Exception as e:
+        print("[kafka_sensor] invalid JSON:", e, flush=True)
+        return False
+
+    recv = payload.get("job_id")
+    status = str(payload.get("status","")).lower()
+    ok = (recv == expected_job_id and status == "done")
+    print(f"[kafka_sensor] check: expected={expected_job_id} received={recv} status={status} -> {ok}", flush=True)
+    return payload if ok else None
+
 
 with DAG(
     dag_id="crawler_trigger_dag",
@@ -58,7 +75,7 @@ with DAG(
         task_id="wait_for_done",
         kafka_config_id="new_kafka",
         topics=["crawler-done-topic"],
-        apply_function="include.kafka_filters.kafka_message_check",
+        apply_function="crawler_trigger_dag.kafka_message_check",
         apply_function_args=[expected],     # ← 여기! args로 넘김
         poll_timeout=1,
         poll_interval=5,
