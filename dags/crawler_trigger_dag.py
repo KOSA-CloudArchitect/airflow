@@ -41,25 +41,15 @@ with DAG(
     #     data='{"job_id":"{{ dag_run.conf.get("job_id") }}"}',
     #     headers={"Content-Type": "application/json"},
     # )
-    # call_crawler = HttpOperator(
-    #     task_id="call_crawler",
-    #     http_conn_id="httpbin",
-    #     endpoint="post",
-    #     method="POST",
-    #     data='{"job_id":"{{ dag_run.conf.get(\'job_id\') }}"}',
-    #     headers={"Content-Type": "application/json"},
-    #     on_execute_callback=log_job_id_callback,   # ← 추가
-    #     log_response=True,                         # ← 응답도 로그에 찍고 싶으면
-    # )
-    wait_for_done = AwaitMessageSensor(
-        task_id="wait_for_done",
-        kafka_config_id="new_kafka",             # 트리거러 로그에 GET .../connections/new_kafka 찍히는 그 커넥션
-        topics=["crawler-done-topic"],
-        apply_function="include.kafka_filters.any_message_ok",
-        poll_timeout=1,
-        poll_interval=5,
-        execution_timeout=timedelta(minutes=5),
-        retries=0,
+    call_crawler = HttpOperator(
+        task_id="call_crawler",
+        http_conn_id="httpbin",
+        endpoint="post",
+        method="POST",
+        data='{"job_id":"{{ dag_run.conf.get(\'job_id\') }}"}',
+        headers={"Content-Type": "application/json"},
+        on_execute_callback=log_job_id_callback,   # ← 추가
+        log_response=True,                         # ← 응답도 로그에 찍고 싶으면
     )
 
 
@@ -69,7 +59,7 @@ with DAG(
         task_id="wait_for_done",
         kafka_config_id="new_kafka",                       # 트리거 로그에 GET .../connections/new_kafka 찍히는 그 커넥션
         topics=["crawler-done-topic"],
-        apply_function="include.kafka_filters.kafka_message_check",
+        apply_function="include.kafka_filters.any_message_ok",
         apply_function_kwargs={"expected_job_id": "test-001"},  # ← 핵심!
         xcom_push_key="retrieved_message",                 # 원하면 수신 payload를 XCom에 보관
         retries=0,
