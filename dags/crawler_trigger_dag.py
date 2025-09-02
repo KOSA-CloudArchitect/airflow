@@ -9,16 +9,23 @@ import json
 def log_request(**context):
     conf = context['dag_run'].conf or {}
     logging.info(f"[crawler DAG Triggered] Received conf: {conf}")
-
-def kafka_message_check(message, **context):
+        
+def kafka_message_check(message=None, **context):
     """Kafka 메시지가 crawler 완료 신호인지 확인"""
     try:
+        # 템플릿 렌더링 단계에서는 message가 None로 들어옵니다.
+        if message is None:
+            return False
+
         payload = json.loads(message.value().decode("utf-8"))
-        job_id = context["dag_run"].conf.get("job_id")
-        return payload.get("job_id") == job_id and payload.get("status") == "done"
+
+        dag_run = context.get("dag_run")
+        job_id_from_conf = (dag_run.conf or {}).get("job_id") if dag_run else None
+
+        return payload.get("job_id") == job_id_from_conf and payload.get("status") == "done"
     except Exception:
         return False
-
+        
 with DAG(
     dag_id="crawler_trigger_dag",
     default_args={"owner": "airflow"},
