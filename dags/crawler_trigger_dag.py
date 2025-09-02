@@ -85,13 +85,26 @@ with DAG(
         on_execute_callback=log_job_id_callback,   # ← 추가
         log_response=True,                         # ← 응답도 로그에 찍고 싶으면
     )
-
     wait_for_done = AwaitMessageSensor(
         task_id="wait_for_done",
-        kafka_config_id = "crawl_kafka_job",
-        topics=["crawler-done-topic"],    # 완료 이벤트를 보내는 topic
+        kafka_config_id="crawl_kafka_job",
+        topics=["crawler-done-topic"],
         apply_function="include.kafka_filters.kafka_message_check",
-        pool="crawler_pool",        # 여기서만 pool 점유sdsds
+        consumer_config={
+            "group.id": "airflow-crawler-done-{{ ts_nodash }}",  # 매 런마다 고유
+            "enable.auto.commit": False,
+            "auto.offset.reset": "earliest",
+        },
+        timeout=15 * 60,
+        retries=0,
+        pool="crawler_pool"
     )
+    # wait_for_done = AwaitMessageSensor(
+    #     task_id="wait_for_done",
+    #     kafka_config_id = "crawl_kafka_job",
+    #     topics=["crawler-done-topic"],    # 완료 이벤트를 보내는 topic
+    #     apply_function="include.kafka_filters.kafka_message_check",
+    #     pool="crawler_pool",        # 여기서만 pool 점유sdsds
+    # )
 
     log_task >> call_crawler >> wait_for_done
