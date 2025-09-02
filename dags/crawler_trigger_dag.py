@@ -95,8 +95,6 @@ with DAG(
             "enable.auto.commit": False,
             "auto.offset.reset": "earliest",
         },
-        timeout=15 * 60,
-        retries=0,
         pool="crawler_pool"
     )
     # wait_for_done = AwaitMessageSensor(
