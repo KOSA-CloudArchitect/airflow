@@ -54,14 +54,16 @@ with DAG(
 
 
     expected = "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}"
-
     wait_for_done = AwaitMessageSensor(
         task_id="wait_for_done",
-        kafka_config_id="new_kafka",                       # 트리거 로그에 GET .../connections/new_kafka 찍히는 그 커넥션
+        kafka_config_id="new_kafka",
         topics=["crawler-done-topic"],
         apply_function="include.kafka_filters.kafka_message_check",
-        apply_function_kwargs={"expected_job_id": expected},  # ← 핵심!
-        #xcom_push_key="retrieved_message",                 # 원하면 수신 payload를 XCom에 보관
+        apply_function_args=[expected],     # ← 여기! args로 넘김
+        poll_timeout=1,
+        poll_interval=5,
+        execution_timeout=timedelta(minutes=10),
+        xcom_push_key="retrieved_message",
         retries=0,
     )
     # wait_for_done = AwaitMessageSensor(
