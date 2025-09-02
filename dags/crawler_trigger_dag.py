@@ -59,9 +59,9 @@ with DAG(
         task_id="wait_for_done",
         kafka_config_id="new_kafka",                       # 트리거 로그에 GET .../connections/new_kafka 찍히는 그 커넥션
         topics=["crawler-done-topic"],
-        apply_function="include.kafka_filters.kafka_message_check",
-        apply_function_kwargs={"expected_job_id": "test-001"},  # ← 핵심!
-        xcom_push_key="retrieved_message",                 # 원하면 수신 payload를 XCom에 보관
+        apply_function="include.kafka_filters.any_message_ok",
+        #apply_function_kwargs={"expected_job_id": "test-001"},  # ← 핵심!
+        #xcom_push_key="retrieved_message",                 # 원하면 수신 payload를 XCom에 보관
         retries=0,
     )
     # wait_for_done = AwaitMessageSensor(
