@@ -64,12 +64,12 @@ with DAG(
         xcom_push_key="retrieved_message",                 # 원하면 수신 payload를 XCom에 보관
         retries=0,
     )
-    # wait_for_done = AwaitMessageSensor(
-    #     task_id="wait_for_done",
-    #     kafka_config_id = "crawl_kafka_job",
-    #     topics=["crawler-done-topic"],    # 완료 이벤트를 보내는 topic
-    #     apply_function="include.kafka_filters.kafka_message_check",
-    #     pool="crawler_pool",        # 여기서만 pool 점유sdsds
-    # )
+    wait_for_done = AwaitMessageSensor(
+        task_id="wait_for_done",
+        kafka_config_id = "crawl_kafka_job",
+        topics=["crawler-done-topic"],    # 완료 이벤트를 보내는 topic
+        apply_function="include.kafka_filters.kafka_message_check",
+        pool="crawler_pool",        # 여기서만 pool 점유sdsds
+    )
 
     log_task >> call_crawler >> wait_for_done
