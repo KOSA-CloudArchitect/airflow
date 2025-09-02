@@ -1,43 +1,24 @@
-import json, logging
+import json
 
-def _safe(obj, meth, default=None):
-    try: return getattr(obj, meth)()
-    except Exception: return default
-
-def kafka_message_check(message=None, **context):
+def kafka_message_check(message=None, expected_job_id=None):
     if message is None:
-        logging.debug("[kafka_sensor] called with message=None (render phase)")
         return False
 
     raw = message.value()
     text = raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
-
-    # 여기까지 오면 '메시지를 Kafka에서 꺼내옴'이 확정 → 반드시 한 줄 찍힘
-    logging.info(
-        "[kafka_sensor] received: topic=%s partition=%s offset=%s key=%s headers=%s value=%s",
-        _safe(message, "topic", "<??>"),
-        _safe(message, "partition", "<??>"),
-        _safe(message, "offset", "<??>"),
-        _safe(message, "key"),
-        _safe(message, "headers"),
-        text[:2000]
-    )
+    print("[kafka_sensor] received:", text[:1000], flush=True)  # 소비 사실을 확실히 노출
 
     try:
         payload = json.loads(text)
     except Exception as e:
-        logging.warning("[kafka_sensor] invalid JSON; skip. err=%s", e, exc_info=False)
+        print("[kafka_sensor] invalid JSON:", e, flush=True)
         return False
 
-    dag_run = context.get("dag_run")
-    expected = (dag_run.conf or {}).get("job_id") or dag_run.run_id if dag_run else None
     recv_job = payload.get("job_id")
-    status = str(payload.get("status", "")).lower()
+    status   = str(payload.get("status", "")).lower()
+    match = (expected_job_id is not None and recv_job == expected_job_id and status == "done")
+    print(f"[kafka_sensor] check: expected={expected_job_id} received={recv_job} status={status} -> {match}", flush=True)
 
-    match = (recv_job == expected and status == "done")
-    logging.info("[kafka_sensor] check: expected=%s received=%s status=%s -> match=%s",expected, recv_job, status, match)
+    # 성공 시 센서가 이벤트로 xcom에 실어줄 수 있도록 payload 자체를 반환
+    return payload if match else None
 
-    if recv_job == expected and status in {"error","failed","fail"}:
-        raise RuntimeError(f"[kafka_sensor] job failed signaled via Kafka: {payload}")
-
-    return match
