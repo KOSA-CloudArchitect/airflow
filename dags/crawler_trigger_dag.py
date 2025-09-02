@@ -29,7 +29,7 @@ def kafka_message_check(message=None, **context):
 
         dag_run = context.get("dag_run")
         job_id_from_conf = (dag_run.conf or {}).get("job_id") if dag_run else None
-
+        logging.info(f"[kafka_message_check] message={job_id_from_conf}")
         return payload.get("job_id") == job_id_from_conf and payload.get("status") == "done"
     except Exception:
         return False
