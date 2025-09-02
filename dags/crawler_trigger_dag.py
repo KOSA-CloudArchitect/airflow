@@ -16,41 +16,7 @@ def log_job_id_callback(context):
     job_id = (dag_run.conf or {}).get("job_id") if dag_run else None
     logging.info(f"[call_crawler] job_id={job_id}")
 
-def _safe(obj, meth, default=None):
-    try: return getattr(obj, meth)()
-    except Exception: 
-        return default
-        
-def kafka_message_check(message=None, **context):
-    """Kafka 메시지가 crawler 완료 신호인지 확인"""
-    try:
-        # 템플릿 렌더링 단계에서는 message가 None로 들어옵니다.
-        if message is None:
-            return False
 
-        raw = message.value()
-        text = raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
-
-        # 여기까지 오면 '메시지를 Kafka에서 꺼내옴'이 확정 → 반드시 한 줄 찍힘
-        logging.info(
-            "[kafka_sensor] received: topic=%s partition=%s offset=%s key=%s headers=%s value=%s",
-            _safe(message, "topic", "<??>"),
-            _safe(message, "partition", "<??>"),
-            _safe(message, "offset", "<??>"),
-            _safe(message, "key"),
-            _safe(message, "headers"),
-            text[:2000]
-        )
-        payload = json.loads(message.value().decode("utf-8"))
-        logging.info(f"[kafka_message_check] message={payload}")
-
-        dag_run = context.get("dag_run")
-        job_id_from_conf = (dag_run.conf or {}).get("job_id") if dag_run else None
-        logging.info(f"[kafka_message_check] message={job_id_from_conf}")
-        return payload.get("job_id") == job_id_from_conf and payload.get("status") == "done"
-    except Exception:
-        return False
-        
 with DAG(
     dag_id="crawler_trigger_dag",
     default_args={"owner": "airflow"},
