@@ -51,13 +51,6 @@ with DAG(
         on_execute_callback=log_job_id_callback,   # ← 추가
         log_response=True,                         # ← 응답도 로그에 찍고 싶으면
     )
-    wait_for_done = AwaitMessageSensor(
-        task_id="wait_for_done",
-        kafka_config_id="new_kafka",
-        topics=["crawler-done-topic"],
-        apply_function="include.kafka_filters.kafka_message_check",
-        pool="crawler_pool"
-    )
 
     #expected = "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}"
 
