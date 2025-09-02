@@ -87,7 +87,7 @@ with DAG(
     )
     wait_for_done = AwaitMessageSensor(
         task_id="wait_for_done",
-        kafka_config_id="crawl_kafka_job",
+        kafka_config_id="new_kafka",
         topics=["crawler-done-topic"],
         apply_function="include.kafka_filters.kafka_message_check",
         pool="crawler_pool"
