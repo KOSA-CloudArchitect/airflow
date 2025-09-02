@@ -72,7 +72,7 @@ with DAG(
     wait_for_done = AwaitMessageSensor(
         task_id="wait_for_done",
         kafka_config_id = "crawl_kafka_job",
-        topics=["crawler_done_topic"],    # 완료 이벤트를 보내는 topic
+        topics=["crawler-done-topic"],    # 완료 이벤트를 보내는 topic
         apply_function="crawler_trigger_dag.kafka_message_check",
         pool="crawler_pool",        # 여기서만 pool 점유sdsds
     )
