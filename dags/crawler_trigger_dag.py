@@ -41,16 +41,27 @@ with DAG(
     #     data='{"job_id":"{{ dag_run.conf.get("job_id") }}"}',
     #     headers={"Content-Type": "application/json"},
     # )
-    call_crawler = HttpOperator(
-        task_id="call_crawler",
-        http_conn_id="httpbin",
-        endpoint="post",
-        method="POST",
-        data='{"job_id":"{{ dag_run.conf.get(\'job_id\') }}"}',
-        headers={"Content-Type": "application/json"},
-        on_execute_callback=log_job_id_callback,   # ← 추가
-        log_response=True,                         # ← 응답도 로그에 찍고 싶으면
+    # call_crawler = HttpOperator(
+    #     task_id="call_crawler",
+    #     http_conn_id="httpbin",
+    #     endpoint="post",
+    #     method="POST",
+    #     data='{"job_id":"{{ dag_run.conf.get(\'job_id\') }}"}',
+    #     headers={"Content-Type": "application/json"},
+    #     on_execute_callback=log_job_id_callback,   # ← 추가
+    #     log_response=True,                         # ← 응답도 로그에 찍고 싶으면
+    # )
+    wait_for_done = AwaitMessageSensor(
+        task_id="wait_for_done",
+        kafka_config_id="new_kafka",             # 트리거러 로그에 GET .../connections/new_kafka 찍히는 그 커넥션
+        topics=["crawler-done-topic"],
+        apply_function="include.kafka_filters.any_message_ok",
+        poll_timeout=1,
+        poll_interval=5,
+        execution_timeout=timedelta(minutes=5),
+        retries=0,
     )
+
 
     #expected = "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}"
 
