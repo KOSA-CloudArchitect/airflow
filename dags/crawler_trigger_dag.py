@@ -74,7 +74,7 @@ with DAG(
     wait_for_done = AwaitMessageSensor(
         task_id="wait_for_done",
         kafka_config_id="new_kafka",
-        topics=["crawler-done-topic"],
+        topics=["realtime-review-collection-topic"],
         apply_function="crawler_trigger_dag.kafka_message_check",
         apply_function_args=[expected],     # ← 여기! args로 넘김
         poll_timeout=1,
