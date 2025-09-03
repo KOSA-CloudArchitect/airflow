@@ -48,16 +48,6 @@ with DAG(
         python_callable=log_request,
     )
 
-    # call_crawler = HttpOperator(
-    #     task_id="call_crawler",
-    #     # http_conn_id="crawler_local",
-    #     # endpoint="/collect",
-    #     http_conn_id="httpbin",   # Airflow Connection에서 httpbin 등록 필요
-    #     endpoint="post",
-    #     method="POST",
-    #     data='{"job_id":"{{ dag_run.conf.get("job_id") }}"}',
-    #     headers={"Content-Type": "application/json"},
-    # )
     call_crawler = HttpOperator(
         task_id="call_crawler",
         http_conn_id="httpbin",
@@ -73,7 +63,7 @@ with DAG(
     expected = "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}"
     wait_for_done = AwaitMessageSensor(
         task_id="wait_for_done",
-        kafka_config_id="new_kafka",
+        kafka_config_id="realtime-review-collection-topic",
         topics=["realtime-review-collection-topic"],
         apply_function="crawler_trigger_dag.kafka_message_check",
         apply_function_args=[expected],     # ← 여기! args로 넘김
@@ -82,13 +72,8 @@ with DAG(
         execution_timeout=timedelta(minutes=10),
         xcom_push_key="retrieved_message",
         retries=0,
+        pool="crawler_pool"
     )
-    # wait_for_done = AwaitMessageSensor(
-    #     task_id="wait_for_done",
-    #     kafka_config_id = "crawl_kafka_job",
-    #     topics=["crawler-done-topic"],    # 완료 이벤트를 보내는 topic
-    #     apply_function="include.kafka_filters.kafka_message_check",
-    #     pool="crawler_pool",        # 여기서만 pool 점유sdsds
-    # )
+
 
     log_task >> call_crawler >> wait_for_done
