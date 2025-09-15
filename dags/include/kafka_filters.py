@@ -30,3 +30,41 @@ def any_message_ok(message=None):
         s = str(val)
     print("[ANY] got:", s[:1000], flush=True)  # ← 반드시 트리거러 로그에 찍혀야 함
     return True
+
+def control_message_check(expected_job_id, expected_step, message):
+    """Control 토픽 메시지 필터링 함수
+    
+    Args:
+        expected_job_id: 예상 job_id
+        expected_step: 예상 단계 (collection, transform, analysis, aggregation)
+        message: Kafka 메시지
+    
+    Returns:
+        dict: 필터링된 메시지 데이터 또는 None
+    """
+    raw = message.value()
+    text = raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
+    print(f"[control_sensor] received: {text[:1000]}", flush=True)
+
+    try:
+        payload = json.loads(text)
+    except Exception as e:
+        print(f"[control_sensor] invalid JSON: {e}", flush=True)
+        return None
+
+    # 필수 필드 검증
+    job_id = payload.get("job_id")
+    step = payload.get("step")
+    status = str(payload.get("status", "")).lower()
+    
+    # 조건 검사
+    is_match = (
+        job_id == expected_job_id and 
+        step == expected_step and 
+        status == "done"
+    )
+    
+    print(f"[control_sensor] check: expected_job_id={expected_job_id}, expected_step={expected_step}")
+    print(f"[control_sensor] received: job_id={job_id}, step={step}, status={status} -> {is_match}", flush=True)
+    
+    return payload if is_match else None
