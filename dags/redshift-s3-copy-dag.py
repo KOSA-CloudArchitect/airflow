@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from airflow import DAG
-from airflow.providers.amazon.aws.sensors.s3 import S3PrefixSensor
+from airflow.providers.amazon.aws.sensors.s3 import S3KeySensor
 from airflow.providers.amazon.aws.operators.redshift_sql import RedshiftSQLOperator
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
@@ -132,11 +132,11 @@ def validate_copy_results(**context) -> Dict[str, Any]:
     
     return validation_results
 
-# S3 프리픽스 센서 (해당 날짜 경로에 파일 존재 확인)
-s3_file_sensor = S3PrefixSensor(
+# S3 키 센서 (해당 날짜 경로에 하나 이상의 파일 존재 확인)
+s3_file_sensor = S3KeySensor(
     task_id='s3_file_sensor',
     bucket_name=S3_BUCKET,
-    prefix=f"{S3_PREFIX}/{{{{ ds[0:4] }}}}{{{{ ds[5:7] }}}}{{{{ ds[8:10] }}}}/",
+    bucket_key=f"{S3_PREFIX}/{{{{ ds[0:4] }}}}{{{{ ds[5:7] }}}}{{{{ ds[8:10] }}}}/*",
     aws_conn_id='aws_default',
     poke_interval=60,
     timeout=300,
