@@ -37,7 +37,7 @@ def determine_crawler_type(conf):
     # 기본값은 단일 상품 크롤링
     return 'single'
 
-def prepare_crawler_request(conf):
+def build_crawler_request_payload(conf):
     """크롤링 타입에 따라 요청 데이터를 준비하는 함수
     
     Args:
@@ -89,7 +89,7 @@ def call_crawler_dynamic(**context):
     conf = context['dag_run'].conf or {}
     
     try:
-        endpoint, request_data = prepare_crawler_request(conf)
+        endpoint, request_data = build_crawler_request_payload(conf)
         
         logging.info(f"[Dynamic Crawler] Calling endpoint: {endpoint}")
         logging.info(f"[Dynamic Crawler] Request data: {request_data}")
@@ -147,7 +147,7 @@ with DAG(
     )
 
     # 2. 크롤링 타입 결정 및 요청 데이터 준비
-    prepare_crawler_request = PythonOperator(
+    prepare_crawler_request_task = PythonOperator(
         task_id="prepare_crawler_request",
         python_callable=call_crawler_dynamic,
     )
@@ -243,7 +243,7 @@ with DAG(
     )
 
     # 작업 순서 정의
-    log_request_task >> prepare_crawler_request >> call_crawler >> wait_collection >> wait_transform >> wait_analysis >> wait_aggregation >> notify_completion
+    log_request_task >> prepare_crawler_request_task >> call_crawler >> wait_collection >> wait_transform >> wait_analysis >> wait_aggregation >> notify_completion
 
 """
 DAG 실행 방법:
