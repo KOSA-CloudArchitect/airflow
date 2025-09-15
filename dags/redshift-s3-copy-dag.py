@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from airflow import DAG
-from airflow.providers.amazon.aws.operators.s3 import S3FileSensor
+from airflow.providers.amazon.aws.sensors.s3 import S3PrefixSensor
 from airflow.providers.amazon.aws.operators.redshift_sql import RedshiftSQLOperator
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
@@ -32,7 +32,7 @@ dag = DAG(
     DAG_ID,
     default_args=default_args,
     description='Redshift S3 COPY Pipeline for Review Data',
-    schedule_interval='@hourly',  # 매시간 실행
+    schedule='@hourly',  # Airflow 3.x
     max_active_runs=1,
     tags=['redshift', 's3', 'kafka', 'review-data']
 )
@@ -132,11 +132,11 @@ def validate_copy_results(**context) -> Dict[str, Any]:
     
     return validation_results
 
-# S3 파일 센서 (파일 존재 확인)
-s3_file_sensor = S3FileSensor(
+# S3 프리픽스 센서 (해당 날짜 경로에 파일 존재 확인)
+s3_file_sensor = S3PrefixSensor(
     task_id='s3_file_sensor',
     bucket_name=S3_BUCKET,
-    bucket_key=f"{S3_PREFIX}/{{{{ ds[0:4] }}}}{{{{ ds[5:7] }}}}{{{{ ds[8:10] }}}}/",
+    prefix=f"{S3_PREFIX}/{{{{ ds[0:4] }}}}{{{{ ds[5:7] }}}}{{{{ ds[8:10] }}}}/",
     aws_conn_id='aws_default',
     poke_interval=60,
     timeout=300,

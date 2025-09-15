@@ -135,7 +135,7 @@ with DAG(
     dag_id="realtime_pipeline_monitor",
     default_args=default_args,
     description="실시간 파이프라인 모니터링 (Control 토픽 기반)",
-    schedule_interval=None,
+    schedule=None,
     catchup=False,
     tags=["pipeline", "monitor", "control-topic", "realtime"]
 ) as dag:
