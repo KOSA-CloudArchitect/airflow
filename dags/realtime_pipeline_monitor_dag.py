@@ -3,10 +3,15 @@ from airflow.operators.python import PythonOperator
 from airflow.providers.http.operators.http import HttpOperator
 from airflow.providers.apache.kafka.sensors.kafka import AwaitMessageSensor
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+from airflow.models.xcom_arg import XComArg
 from datetime import datetime, timedelta
 import logging
 import json
 import pytz
+
+# Discord 알림 유틸은 dags/include/discord_notifier.py에 구현
+# 준비되면 아래 import의 주석을 해제하세요.
+# from include.discord_notifier import send_discord_failure_alert
 
 def log_crawler_callback(context):
     """크롤러 호출 시 job_id 로깅 및 실행 시간 저장"""
@@ -123,7 +128,11 @@ def handle_step_failure(context):
     logging.error(f"Job {job_id} failed at {step} step")
     print(f"🚨 Pipeline failure: Job {job_id} failed at {step} step", flush=True)
     
-    # 추가 알림 로직 구현 가능 (Slack, 이메일 등)
+    # Discord로 실패 알림 전송 (실사용 전까지 주석 유지)
+    # try:
+    #     send_discord_failure_alert(context=context, job_id=job_id, step=step)
+    # except Exception as e:
+    #     logging.error(f"[Discord Notify] Failed to send alert: {e}")
 
 def prepare_redshift_trigger_data(**context):
     """Redshift DAG 트리거를 위한 데이터 준비"""
@@ -279,7 +288,7 @@ with DAG(
     trigger_redshift_dag = TriggerDagRunOperator(
         task_id="trigger_redshift_dag",
         trigger_dag_id="redshift_s3_copy_pipeline",
-        conf="{{ ti.xcom_pull(task_ids='notify_and_prepare_redshift') | tojson | fromjson }}",
+        conf=XComArg(notify_and_prepare_redshift),
         wait_for_completion=False,  # 비동기 실행
         poke_interval=30,
         dag=dag
