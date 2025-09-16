@@ -279,7 +279,7 @@ with DAG(
     trigger_redshift_dag = TriggerDagRunOperator(
         task_id="trigger_redshift_dag",
         trigger_dag_id="redshift_s3_copy_pipeline",
-        conf="{{ ti.xcom_pull(task_ids='notify_and_prepare_redshift') }}",
+        conf="{{ ti.xcom_pull(task_ids='notify_and_prepare_redshift') | tojson | fromjson }}",
         wait_for_completion=False,  # 비동기 실행
         poke_interval=30,
         dag=dag
