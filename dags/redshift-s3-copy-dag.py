@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.providers.amazon.aws.sensors.s3 import S3KeySensor
-from airflow.providers.amazon.aws.operators.redshift_data import RedshiftDataOperator
+from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 import boto3
@@ -16,7 +16,6 @@ S3_BUCKET = 'hihypipe-raw-data'
 S3_PREFIX = 'topics/review-rows'
 REDSHIFT_SCHEMA = 'public'
 REDSHIFT_TABLE = 'realtime_review_collection'
-REDSHIFT_DATABASE = 'hihypipe'
 
 # 기본 DAG 인수
 default_args = {
@@ -242,7 +241,7 @@ get_s3_files = PythonOperator(
 )
 
 # 3. 모든 테이블 생성 (통합)
-create_all_tables = RedshiftDataOperator(
+create_all_tables = SQLExecuteQueryOperator(
     task_id='create_all_tables',
     sql=f"""
     -- 메인 테이블 생성
@@ -306,24 +305,20 @@ create_all_tables = RedshiftDataOperator(
     DISTKEY(review_id)
     SORTKEY(review_id, reason_order);
     """,
-    database=REDSHIFT_DATABASE,
-    workgroup_name='hihypipe-redshift-workgroup',
-    aws_conn_id='aws_default',
+    conn_id='redshift_default',
     dag=dag
 )
 
 # S3에서 Redshift로 데이터 복사 (job_id 기준)
-copy_to_redshift = RedshiftDataOperator(
+copy_to_redshift = SQLExecuteQueryOperator(
     task_id='copy_to_redshift',
     sql=create_redshift_copy_sql_for_job,
-    database=REDSHIFT_DATABASE,
-    workgroup_name='hihypipe-redshift-workgroup',
-    aws_conn_id='aws_default',
+    conn_id='redshift_default',
     dag=dag
 )
 
 # 5. JSON 데이터 파싱 및 인덱스 생성 (병렬 처리)
-parse_json_data = RedshiftDataOperator(
+parse_json_data = SQLExecuteQueryOperator(
     task_id='parse_json_data',
     sql=f"""
     -- JSON 파싱 함수 생성
@@ -373,14 +368,12 @@ parse_json_data = RedshiftDataOperator(
     FROM {REDSHIFT_SCHEMA}.{REDSHIFT_TABLE} 
     WHERE invalid_reason IS NOT NULL AND invalid_reason != '[]' AND invalid_reason != 'null';
     """,
-    database=REDSHIFT_DATABASE,
-    workgroup_name='hihypipe-redshift-workgroup',
-    aws_conn_id='aws_default',
+    conn_id='redshift_default',
     dag=dag
 )
 
 # 6. 성능 최적화 인덱스 생성 (병렬 처리)
-create_indexes = RedshiftDataOperator(
+create_indexes = SQLExecuteQueryOperator(
     task_id='create_indexes',
     sql=f"""
     -- 메인 테이블 인덱스 (job_id 우선)
@@ -413,9 +406,7 @@ create_indexes = RedshiftDataOperator(
     CREATE INDEX IF NOT EXISTS idx_review_keywords_keyword_value 
     ON {REDSHIFT_SCHEMA}.review_keywords (keyword_value);
     """,
-    database=REDSHIFT_DATABASE,
-    workgroup_name='hihypipe-redshift-workgroup',
-    aws_conn_id='aws_default',
+    conn_id='redshift_default',
     dag=dag
 )
 
