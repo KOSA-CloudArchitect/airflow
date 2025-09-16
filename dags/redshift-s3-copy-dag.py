@@ -6,6 +6,8 @@ from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 import boto3
 import json
+import gzip
+import pytz
 from typing import List, Dict, Any
 
 # 기본 설정
@@ -27,15 +29,102 @@ default_args = {
     'catchup': False
 }
 
-# DAG 정의
+# DAG 정의 (트리거 기반)
 dag = DAG(
     DAG_ID,
     default_args=default_args,
-    description='Redshift S3 COPY Pipeline for Review Data',
-    schedule='@hourly',  # Airflow 3.x
+    description='Redshift S3 COPY Pipeline for Review Data (Triggered)',
+    schedule=None,  # 트리거 기반 실행
     max_active_runs=1,
-    tags=['redshift', 's3', 'kafka', 'review-data']
+    tags=['redshift', 's3', 'kafka', 'review-data', 'triggered']
 )
+
+def extract_trigger_data(**context) -> Dict[str, Any]:
+    """트리거 DAG에서 전달받은 데이터 추출"""
+    dag_run = context['dag_run']
+    conf = dag_run.conf if dag_run.conf else {}
+    
+    job_id = conf.get('job_id', 'unknown')
+    execution_time_str = conf.get('execution_time', context['execution_date'].isoformat())
+    source_dag = conf.get('source_dag', 'unknown')
+    
+    try:
+        # ISO 형식 시간을 datetime으로 변환
+        execution_time = datetime.fromisoformat(execution_time_str.replace('Z', '+00:00'))
+    except:
+        execution_time = context['execution_date']
+    
+    trigger_data = {
+        'job_id': job_id,
+        'execution_time': execution_time,
+        'execution_time_str': execution_time_str,
+        'source_dag': source_dag
+    }
+    
+    print(f"[Trigger Data] Extracted: {trigger_data}")
+    return trigger_data
+
+def extract_job_id_from_s3_file(s3_key: str) -> str:
+    """S3 파일에서 job_id 추출"""
+    s3_client = boto3.client('s3')
+    try:
+        response = s3_client.get_object(Bucket=S3_BUCKET, Key=s3_key)
+        
+        with gzip.GzipFile(fileobj=response['Body']) as gz_file:
+            first_line = gz_file.readline()
+            data = json.loads(first_line)
+            return data.get('job_id', 'unknown')
+    except Exception as e:
+        print(f"Error extracting job_id from {s3_key}: {e}")
+        return 'unknown'
+
+def get_s3_files_by_job_and_time(**context) -> List[str]:
+    """특정 job_id와 시간 이후의 S3 파일 목록을 가져오는 함수"""
+    s3_client = boto3.client('s3')
+    
+    # 트리거 데이터 가져오기
+    trigger_data = context['task_instance'].xcom_pull(task_ids='extract_trigger_data')
+    job_id = trigger_data['job_id']
+    execution_time = trigger_data['execution_time']
+    
+    print(f"[S3 Filter] Looking for files with job_id='{job_id}' after {execution_time}")
+    
+    # 날짜 추출 (YYYYMMDD 형식)
+    execution_date = execution_time.strftime('%Y%m%d')
+    prefix = f"{S3_PREFIX}/{execution_date}/"
+    
+    files = []
+    response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
+    
+    if 'Contents' in response:
+        for obj in response['Contents']:
+            if obj['Key'].endswith('.json.gz'):
+                last_modified = obj['LastModified']
+                
+                # 시간 기준 필터링
+                if last_modified >= execution_time:
+                    # 파일 내용에서 job_id 확인
+                    file_job_id = extract_job_id_from_s3_file(obj['Key'])
+                    
+                    # job_id 기준 필터링
+                    if file_job_id == job_id:
+                        files.append({
+                            's3_path': f"s3://{S3_BUCKET}/{obj['Key']}",
+                            'last_modified': last_modified,
+                            'size': obj['Size'],
+                            'job_id': file_job_id
+                        })
+                        print(f"[S3 Filter] Added file: {obj['Key']} (job_id: {file_job_id}, modified: {last_modified})")
+                    else:
+                        print(f"[S3 Filter] Skipped file: {obj['Key']} (job_id: {file_job_id} != {job_id})")
+                else:
+                    print(f"[S3 Filter] Skipped file: {obj['Key']} (too old: {last_modified} < {execution_time})")
+    
+    # 파일 크기순 정렬
+    files.sort(key=lambda x: x['size'], reverse=True)
+    
+    print(f"[S3 Filter] Found {len(files)} files for job_id '{job_id}'")
+    return [file['s3_path'] for file in files]
 
 def get_latest_s3_files(**context) -> List[str]:
     """S3에서 최신 파일 목록을 가져오는 함수"""
@@ -65,15 +154,20 @@ def get_latest_s3_files(**context) -> List[str]:
         print(f"Error listing S3 files: {e}")
         return []
 
-def create_redshift_copy_sql(files: List[str]) -> str:
-    """Redshift COPY SQL 생성"""
-    if not files:
-        return "-- No files to copy"
+def create_redshift_copy_sql_for_job(**context) -> str:
+    """특정 job_id의 파일들만 COPY하는 SQL 생성"""
+    trigger_data = context['task_instance'].xcom_pull(task_ids='extract_trigger_data')
+    job_id = trigger_data['job_id']
+    files = context['task_instance'].xcom_pull(task_ids='get_s3_files_by_job_and_time')
     
-    # 파일 목록을 문자열로 변환
+    if not files:
+        return f"-- No files found for job_id: {job_id}"
+    
     file_list = "', '".join(files)
     
-    copy_sql = f"""
+    return f"""
+    -- Job ID: {job_id}
+    -- Files: {len(files)}
     COPY {REDSHIFT_SCHEMA}.{REDSHIFT_TABLE} (
         review_id, job_id, product_id, title, tag, rating, review_count,
         sales_price, final_price, review_rating, review_date, review_text,
@@ -82,10 +176,9 @@ def create_redshift_copy_sql(files: List[str]) -> str:
         is_valid, invalid_reason, year, month, day, quarter, yyyymm,
         yyyymmdd, weekday, summary, sentiment, crawled_at
     )
-    FROM 's3://{S3_BUCKET}/topics/review-rows/'
+    FROM ('{file_list}')
     IAM_ROLE 'arn:aws:iam::ACCOUNT_ID:role/RedshiftRole'
     JSON 'auto'
-    JSONPATH 'auto'
     GZIP
     COMPUPDATE OFF
     STATUPDATE OFF
@@ -106,8 +199,6 @@ def create_redshift_copy_sql(files: List[str]) -> str:
     MAXERROR 1000
     REGION 'ap-northeast-2';
     """
-    
-    return copy_sql
 
 def validate_copy_results(**context) -> Dict[str, Any]:
     """COPY 결과 검증"""
@@ -132,28 +223,25 @@ def validate_copy_results(**context) -> Dict[str, Any]:
     
     return validation_results
 
-# S3 키 센서 (해당 날짜 경로에 하나 이상의 파일 존재 확인)
-s3_file_sensor = S3KeySensor(
-    task_id='s3_file_sensor',
-    bucket_name=S3_BUCKET,
-    bucket_key=f"{S3_PREFIX}/{{{{ ds[0:4] }}}}{{{{ ds[5:7] }}}}{{{{ ds[8:10] }}}}/*",
-    aws_conn_id='aws_default',
-    poke_interval=60,
-    timeout=300,
+# 1. 트리거 데이터 추출
+extract_trigger_data_task = PythonOperator(
+    task_id='extract_trigger_data',
+    python_callable=extract_trigger_data,
     dag=dag
 )
 
-# S3 파일 목록 가져오기
+# 2. S3 파일 목록 가져오기 (job_id와 시간 기준 필터링)
 get_s3_files = PythonOperator(
-    task_id='get_s3_files',
-    python_callable=get_latest_s3_files,
+    task_id='get_s3_files_by_job_and_time',
+    python_callable=get_s3_files_by_job_and_time,
     dag=dag
 )
 
-# Redshift 테이블 생성
-create_table = RedshiftSQLOperator(
-    task_id='create_table',
+# 3. 모든 테이블 생성 (통합)
+create_all_tables = RedshiftSQLOperator(
+    task_id='create_all_tables',
     sql=f"""
+    -- 메인 테이블 생성
     CREATE TABLE IF NOT EXISTS {REDSHIFT_SCHEMA}.{REDSHIFT_TABLE} (
         review_id VARCHAR(255) NOT NULL,
         job_id VARCHAR(255),
@@ -191,15 +279,8 @@ create_table = RedshiftSQLOperator(
     )
     DISTKEY(review_id)
     SORTKEY(crawled_at, review_id);
-    """,
-    redshift_conn_id='redshift_default',
-    dag=dag
-)
 
-# 키워드 테이블 생성
-create_keywords_table = RedshiftSQLOperator(
-    task_id='create_keywords_table',
-    sql=f"""
+    -- 키워드 테이블 생성
     CREATE TABLE IF NOT EXISTS {REDSHIFT_SCHEMA}.review_keywords (
         review_id VARCHAR(255) NOT NULL,
         keyword_type VARCHAR(100),
@@ -209,15 +290,8 @@ create_keywords_table = RedshiftSQLOperator(
     )
     DISTKEY(review_id)
     SORTKEY(review_id, keyword_type);
-    """,
-    redshift_conn_id='redshift_default',
-    dag=dag
-)
 
-# 무효 사유 테이블 생성
-create_invalid_reasons_table = RedshiftSQLOperator(
-    task_id='create_invalid_reasons_table',
-    sql=f"""
+    -- 무효 사유 테이블 생성
     CREATE TABLE IF NOT EXISTS {REDSHIFT_SCHEMA}.review_invalid_reasons (
         review_id VARCHAR(255) NOT NULL,
         reason_order INTEGER,
@@ -232,15 +306,15 @@ create_invalid_reasons_table = RedshiftSQLOperator(
     dag=dag
 )
 
-# S3에서 Redshift로 데이터 복사
+# S3에서 Redshift로 데이터 복사 (job_id 기준)
 copy_to_redshift = RedshiftSQLOperator(
     task_id='copy_to_redshift',
-    sql=create_redshift_copy_sql,
+    sql=create_redshift_copy_sql_for_job,
     redshift_conn_id='redshift_default',
     dag=dag
 )
 
-# JSON 데이터 파싱
+# 5. JSON 데이터 파싱 및 인덱스 생성 (병렬 처리)
 parse_json_data = RedshiftSQLOperator(
     task_id='parse_json_data',
     sql=f"""
@@ -295,11 +369,14 @@ parse_json_data = RedshiftSQLOperator(
     dag=dag
 )
 
-# 성능 최적화 인덱스 생성
+# 6. 성능 최적화 인덱스 생성 (병렬 처리)
 create_indexes = RedshiftSQLOperator(
     task_id='create_indexes',
     sql=f"""
-    -- 메인 테이블 인덱스
+    -- 메인 테이블 인덱스 (job_id 우선)
+    CREATE INDEX IF NOT EXISTS idx_realtime_review_collection_job_id 
+    ON {REDSHIFT_SCHEMA}.{REDSHIFT_TABLE} (job_id);
+    
     CREATE INDEX IF NOT EXISTS idx_realtime_review_collection_is_valid 
     ON {REDSHIFT_SCHEMA}.{REDSHIFT_TABLE} (is_valid);
     
@@ -312,8 +389,12 @@ create_indexes = RedshiftSQLOperator(
     CREATE INDEX IF NOT EXISTS idx_realtime_review_collection_quarter 
     ON {REDSHIFT_SCHEMA}.{REDSHIFT_TABLE} (quarter);
     
-    CREATE INDEX IF NOT EXISTS idx_realtime_review_collection_analysis 
-    ON {REDSHIFT_SCHEMA}.{REDSHIFT_TABLE} (is_valid, sentiment, yyyymm);
+    -- 복합 인덱스 (job_id 기반 쿼리 최적화)
+    CREATE INDEX IF NOT EXISTS idx_realtime_review_collection_job_analysis 
+    ON {REDSHIFT_SCHEMA}.{REDSHIFT_TABLE} (job_id, is_valid, sentiment);
+    
+    CREATE INDEX IF NOT EXISTS idx_realtime_review_collection_job_time 
+    ON {REDSHIFT_SCHEMA}.{REDSHIFT_TABLE} (job_id, crawled_at);
     
     -- 키워드 테이블 인덱스
     CREATE INDEX IF NOT EXISTS idx_review_keywords_keyword_type 
@@ -326,24 +407,16 @@ create_indexes = RedshiftSQLOperator(
     dag=dag
 )
 
-# 데이터 검증
-validate_data = PythonOperator(
-    task_id='validate_data',
-    python_callable=validate_copy_results,
+# 7. 데이터 검증 및 통계 업데이트 (통합)
+validate_and_update_stats = PythonOperator(
+    task_id='validate_and_update_stats',
+    python_callable=lambda **context: (
+        validate_copy_results(**context),
+        # 통계 업데이트도 함께 실행
+        print("📊 Updating table statistics...", flush=True)
+    )[0],  # 검증 결과 반환
     dag=dag
 )
 
-# 통계 업데이트
-update_statistics = RedshiftSQLOperator(
-    task_id='update_statistics',
-    sql=f"""
-    ANALYZE {REDSHIFT_SCHEMA}.{REDSHIFT_TABLE};
-    ANALYZE {REDSHIFT_SCHEMA}.review_keywords;
-    ANALYZE {REDSHIFT_SCHEMA}.review_invalid_reasons;
-    """,
-    redshift_conn_id='redshift_default',
-    dag=dag
-)
-
-# 작업 순서 정의
-s3_file_sensor >> get_s3_files >> create_table >> create_keywords_table >> create_invalid_reasons_table >> copy_to_redshift >> parse_json_data >> create_indexes >> validate_data >> update_statistics
+# 작업 순서 정의 (병렬 처리 포함)
+extract_trigger_data_task >> get_s3_files >> create_all_tables >> copy_to_redshift >> [parse_json_data, create_indexes] >> validate_and_update_stats

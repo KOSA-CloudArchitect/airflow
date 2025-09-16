@@ -2,20 +2,25 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.http.operators.http import HttpOperator
 from airflow.providers.apache.kafka.sensors.kafka import AwaitMessageSensor
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from datetime import datetime, timedelta
 import logging
 import json
-
-def log_request(**context):
-    """DAG 트리거 시 받은 설정 정보 로깅"""
-    conf = context['dag_run'].conf or {}
-    logging.info(f"[Pipeline Monitor DAG Triggered] Received conf: {conf}")
+import pytz
 
 def log_crawler_callback(context):
-    """크롤러 호출 시 job_id 로깅"""
+    """크롤러 호출 시 job_id 로깅 및 실행 시간 저장"""
     dag_run = context.get("dag_run")
     job_id = (dag_run.conf or {}).get("job_id") if dag_run else None
-    logging.info(f"[call_crawler] job_id={job_id}")
+    
+    # 한국 시간으로 현재 시간 계산
+    kst = pytz.timezone('Asia/Seoul')
+    current_time_kst = datetime.now(kst)
+    
+    logging.info(f"[call_crawler] job_id={job_id}, execution_time={current_time_kst.isoformat()}")
+    
+    # XCom에 실행 시간 저장
+    context['task_instance'].xcom_push(key='crawler_execution_time', value=current_time_kst.isoformat())
 
 def determine_crawler_type(conf):
     """크롤링 타입을 결정하는 함수
@@ -120,6 +125,37 @@ def handle_step_failure(context):
     
     # 추가 알림 로직 구현 가능 (Slack, 이메일 등)
 
+def prepare_redshift_trigger_data(**context):
+    """Redshift DAG 트리거를 위한 데이터 준비"""
+    dag_run = context.get("dag_run")
+    job_id = (dag_run.conf or {}).get("job_id") if dag_run else None
+    
+    # call_crawler에서 저장한 실행 시간 가져오기
+    crawler_execution_time = context['task_instance'].xcom_pull(
+        task_ids='call_crawler', 
+        key='crawler_execution_time'
+    )
+    
+    if crawler_execution_time:
+        execution_time_kst = datetime.fromisoformat(crawler_execution_time)
+    else:
+        # fallback: 현재 시간 사용
+        kst = pytz.timezone('Asia/Seoul')
+        execution_time_kst = datetime.now(kst)
+    
+    trigger_data = {
+        'job_id': job_id,
+        'execution_time': execution_time_kst.isoformat(),
+        'dag_run_id': context['dag_run'].run_id,
+        'source_dag': 'realtime_pipeline_monitor',
+        'trigger_point': 'call_crawler'
+    }
+    
+    logging.info(f"[Redshift Trigger] Prepared data: {trigger_data}")
+    print(f"🔄 Triggering Redshift DAG with job_id={job_id}, execution_time={execution_time_kst.isoformat()} (call_crawler execution time)", flush=True)
+    
+    return trigger_data
+
 # DAG 정의
 default_args = {
     "owner": "data-team",
@@ -140,19 +176,13 @@ with DAG(
     tags=["pipeline", "monitor", "control-topic", "realtime"]
 ) as dag:
 
-    # 1. 요청 로깅
-    log_request_task = PythonOperator(
-        task_id="log_request",
-        python_callable=log_request,
-    )
-
-    # 2. 크롤링 타입 결정 및 요청 데이터 준비
+    # 1. 크롤링 타입 결정 및 요청 데이터 준비
     prepare_crawler_request_task = PythonOperator(
         task_id="prepare_crawler_request",
         python_callable=call_crawler_dynamic,
     )
 
-    # 3. Crawler 서버에 동적 HTTP 요청
+    # 2. Crawler 서버에 동적 HTTP 요청
     call_crawler = HttpOperator(
         task_id="call_crawler",
         http_conn_id="crawler_server",  # 실제 크롤러 서버 연결 ID
@@ -182,7 +212,7 @@ with DAG(
         on_failure_callback=handle_step_failure
     )
 
-    # 4. Transform 단계 완료 대기
+    # 4. Transform 단계 완료 대기 (병렬 처리)
     wait_transform = AwaitMessageSensor(
         task_id="wait_transform",
         kafka_config_id="job-control-topic",
@@ -200,7 +230,7 @@ with DAG(
         on_failure_callback=handle_step_failure
     )
 
-    # 5. Analysis 단계 완료 대기
+    # 5. Analysis 단계 완료 대기 (병렬 처리)
     wait_analysis = AwaitMessageSensor(
         task_id="wait_analysis",
         kafka_config_id="job-control-topic",
@@ -236,14 +266,27 @@ with DAG(
         on_failure_callback=handle_step_failure
     )
 
-    # 7. 완료 알림
-    notify_completion = PythonOperator(
-        task_id="notify_completion",
-        python_callable=lambda: print("🎉 All pipeline steps completed successfully!", flush=True)
+    # 7. 완료 알림 및 Redshift 트리거 데이터 준비 (통합)
+    notify_and_prepare_redshift = PythonOperator(
+        task_id="notify_and_prepare_redshift",
+        python_callable=lambda **context: (
+            print("🎉 All pipeline steps completed successfully!", flush=True),
+            prepare_redshift_trigger_data(**context)
+        )[1],  # prepare_redshift_trigger_data의 결과 반환
     )
 
-    # 작업 순서 정의
-    log_request_task >> prepare_crawler_request_task >> call_crawler >> wait_collection >> wait_transform >> wait_analysis >> wait_aggregation >> notify_completion
+    # 8. Redshift DAG 트리거
+    trigger_redshift_dag = TriggerDagRunOperator(
+        task_id="trigger_redshift_dag",
+        trigger_dag_id="redshift_s3_copy_pipeline",
+        conf="{{ ti.xcom_pull(task_ids='notify_and_prepare_redshift') }}",
+        wait_for_completion=False,  # 비동기 실행
+        poke_interval=30,
+        dag=dag
+    )
+
+    # 작업 순서 정의 (병렬 처리 포함)
+    prepare_crawler_request_task >> call_crawler >> wait_collection >> [wait_transform, wait_analysis] >> wait_aggregation >> notify_and_prepare_redshift >> trigger_redshift_dag
 
 """
 DAG 실행 방법:
