@@ -4,8 +4,7 @@ from airflow.providers.http.operators.http import HttpOperator
 from airflow.providers.apache.kafka.sensors.kafka import AwaitMessageSensor
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.models.xcom_arg import XComArg
-from airflow.providers.standard.sensors.time_delta import TimeDeltaSensorAsync
-from airflow.exceptions import AirflowException
+ 
 from datetime import datetime, timedelta
 import logging
 import json
@@ -29,9 +28,7 @@ def log_crawler_callback(context):
     # XCom에 실행 시간 저장
     context['task_instance'].xcom_push(key='crawler_execution_time', value=current_time_kst.isoformat())
 
-def raise_timeout_exception(step: str, **_):
-    """타임아웃 실패를 강제하기 위한 헬퍼"""
-    raise AirflowException(f"{step} step timed out")
+ 
 
 def determine_crawler_type(conf):
     """크롤링 타입을 결정하는 함수
@@ -221,22 +218,11 @@ with DAG(
         ],
         poll_timeout=1,
         poll_interval=30,  # 30초마다 체크
+        execution_timeout=timedelta(minutes=3),
         xcom_push_key="collection_message",
         retries=0,
         on_failure_callback=handle_step_failure
     )
-
-    # Collection 타임아웃 (3분) → 실패 강제
-    timeout_collection = TimeDeltaSensorAsync(
-        task_id="timeout_collection",
-        delta=timedelta(minutes=3)
-    )
-    fail_collection_timeout = PythonOperator(
-        task_id="fail_collection_timeout",
-        python_callable=raise_timeout_exception,
-        op_args=["collection"]
-    )
-    timeout_collection >> fail_collection_timeout
 
     # 4. Transform 단계 완료 대기 (병렬 처리)
     wait_transform = AwaitMessageSensor(
@@ -250,22 +236,11 @@ with DAG(
         ],
         poll_timeout=1,
         poll_interval=30,
+        execution_timeout=timedelta(minutes=3),
         xcom_push_key="transform_message",
         retries=0,
         on_failure_callback=handle_step_failure
     )
-
-    # Transform 타임아웃 (3분) → 실패 강제
-    timeout_transform = TimeDeltaSensorAsync(
-        task_id="timeout_transform",
-        delta=timedelta(minutes=3)
-    )
-    fail_transform_timeout = PythonOperator(
-        task_id="fail_transform_timeout",
-        python_callable=raise_timeout_exception,
-        op_args=["transform"]
-    )
-    timeout_transform >> fail_transform_timeout
 
     # 5. Analysis 단계 완료 대기 (병렬 처리)
     wait_analysis = AwaitMessageSensor(
@@ -279,22 +254,11 @@ with DAG(
         ],
         poll_timeout=1,
         poll_interval=30,
+        execution_timeout=timedelta(minutes=3),
         xcom_push_key="analysis_message",
         retries=0,
         on_failure_callback=handle_step_failure
     )
-
-    # Analysis 타임아웃 (3분) → 실패 강제
-    timeout_analysis = TimeDeltaSensorAsync(
-        task_id="timeout_analysis",
-        delta=timedelta(minutes=3)
-    )
-    fail_analysis_timeout = PythonOperator(
-        task_id="fail_analysis_timeout",
-        python_callable=raise_timeout_exception,
-        op_args=["analysis"]
-    )
-    timeout_analysis >> fail_analysis_timeout
 
     # 6. Aggregation 단계 완료 대기
     wait_aggregation = AwaitMessageSensor(
@@ -308,22 +272,11 @@ with DAG(
         ],
         poll_timeout=1,
         poll_interval=30,
+        execution_timeout=timedelta(minutes=3),
         xcom_push_key="aggregation_message",
         retries=0,
         on_failure_callback=handle_step_failure
     )
-
-    # Aggregation 타임아웃 (3분) → 실패 강제
-    timeout_aggregation = TimeDeltaSensorAsync(
-        task_id="timeout_aggregation",
-        delta=timedelta(minutes=3)
-    )
-    fail_aggregation_timeout = PythonOperator(
-        task_id="fail_aggregation_timeout",
-        python_callable=raise_timeout_exception,
-        op_args=["aggregation"]
-    )
-    timeout_aggregation >> fail_aggregation_timeout
 
     # 7. 완료 알림 및 Redshift 트리거 데이터 준비 (통합)
     notify_and_prepare_redshift = PythonOperator(
@@ -344,12 +297,8 @@ with DAG(
         dag=dag
     )
 
-    # 작업 순서 정의 (병렬 처리 + 타임아웃 병행)
-    prepare_crawler_request_task >> call_crawler
-    call_crawler >> [wait_collection, timeout_collection]
-    wait_collection >> [wait_transform, wait_analysis, timeout_transform, timeout_analysis]
-    [wait_transform, wait_analysis] >> [wait_aggregation, timeout_aggregation]
-    wait_aggregation >> notify_and_prepare_redshift >> trigger_redshift_dag
+    # 작업 순서 정의 (병렬 처리 포함)
+    prepare_crawler_request_task >> call_crawler >> wait_collection >> [wait_transform, wait_analysis] >> wait_aggregation >> notify_and_prepare_redshift >> trigger_redshift_dag
 
 """
 DAG 실행 방법:
