@@ -215,7 +215,7 @@ with DAG(
         ],
         poll_timeout=1,
         poll_interval=30,  # 30초마다 체크
-        execution_timeout=timedelta(minutes=3),  # 60분 타임아웃
+        timeout=180,  # 센서 최대 대기 시간(초)
         xcom_push_key="collection_message",
         retries=0,
         on_failure_callback=handle_step_failure
@@ -233,7 +233,7 @@ with DAG(
         ],
         poll_timeout=1,
         poll_interval=30,
-        execution_timeout=timedelta(minutes=3),  # 30분 타임아웃
+        timeout=180,
         xcom_push_key="transform_message",
         retries=0,
         on_failure_callback=handle_step_failure
@@ -251,7 +251,7 @@ with DAG(
         ],
         poll_timeout=1,
         poll_interval=30,
-        execution_timeout=timedelta(minutes=3),  # 45분 타임아웃
+        timeout=180,
         xcom_push_key="analysis_message",
         retries=0,
         on_failure_callback=handle_step_failure
@@ -269,7 +269,7 @@ with DAG(
         ],
         poll_timeout=1,
         poll_interval=30,
-        execution_timeout=timedelta(minutes=3),  # 15분 타임아웃
+        timeout=180,
         xcom_push_key="aggregation_message",
         retries=0,
         on_failure_callback=handle_step_failure

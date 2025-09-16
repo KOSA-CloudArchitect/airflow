@@ -32,8 +32,19 @@ def any_message_ok(message=None):
     return True
 
 from airflow.exceptions import AirflowException
+from datetime import datetime
+from typing import Optional
 
-def control_message_check(expected_job_id, expected_step, message):
+def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
+    if not ts:
+        return None
+    try:
+        # support 'Z' suffix
+        return datetime.fromisoformat(ts.replace('Z', '+00:00'))
+    except Exception:
+        return None
+
+def control_message_check(expected_job_id, expected_step, message, min_timestamp_iso: Optional[str] = None):
     """Control 토픽 메시지 필터링 함수
     
     Args:
@@ -58,6 +69,8 @@ def control_message_check(expected_job_id, expected_step, message):
     job_id = payload.get("job_id")
     step = payload.get("step")
     status = str(payload.get("status", "")).lower()
+    event_ts = _parse_iso(payload.get("timestamp"))
+    min_ts = _parse_iso(min_timestamp_iso)
     
     # 실패 즉시 예외 발생
     if job_id == expected_job_id and step == expected_step and status in {"fail", "failed", "error"}:
@@ -66,6 +79,11 @@ def control_message_check(expected_job_id, expected_step, message):
 
     # 성공 조건 검사
     is_match = (job_id == expected_job_id and step == expected_step and status == "done")
+
+    # 최소 타임스탬프가 있으면 필터링 (센서 시작 전 메시지 무시)
+    if is_match and min_ts and event_ts and event_ts < min_ts:
+        print(f"[control_sensor] skip old event: event_ts={event_ts.isoformat()} < min_ts={min_ts.isoformat()}", flush=True)
+        return None
     
     print(f"[control_sensor] check: expected_job_id={expected_job_id}, expected_step={expected_step}")
     print(f"[control_sensor] received: job_id={job_id}, step={step}, status={status} -> {is_match}", flush=True)
