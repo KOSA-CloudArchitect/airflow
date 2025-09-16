@@ -90,9 +90,10 @@ def get_s3_files_by_job_and_time(**context) -> List[str]:
     
     print(f"[S3 Filter] Looking for files with job_id='{job_id}' after {execution_time}")
     
-    # 날짜 추출 (YYYYMMDD 형식)
-    execution_date = execution_time.strftime('%Y%m%d')
-    prefix = f"{S3_PREFIX}/{execution_date}/"
+    # 날짜 추출 (YYYYMMDD 형식, KST 기준) 및 파티션 접두사 구성
+    kst = pytz.timezone('Asia/Seoul')
+    execution_date = execution_time.astimezone(kst).strftime('%Y%m%d')
+    prefix = f"{S3_PREFIX}/{execution_date}/partition=0/"
     
     files = []
     response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
@@ -130,11 +131,13 @@ def get_s3_files_by_job_and_time(**context) -> List[str]:
 def get_latest_s3_files(**context) -> List[str]:
     """S3에서 최신 파일 목록을 가져오는 함수"""
     s3_client = boto3.client('s3')
-    execution_date = context['ds']
-    korean_date = execution_date.replace('-', '')  # YYYY-MM-DD -> YYYYMMDD
+    execution_date = context['ts']  # ISO with timezone
+    dt = datetime.fromisoformat(execution_date.replace('Z', '+00:00'))
+    kst = pytz.timezone('Asia/Seoul')
+    korean_date = dt.astimezone(kst).strftime('%Y%m%d')
     
-    # S3 경로: topics/review-rows/YYYYMMDD/
-    prefix = f"{S3_PREFIX}/{korean_date}/"
+    # S3 경로: topics/review-rows/YYYYMMDD/partition=0/
+    prefix = f"{S3_PREFIX}/{korean_date}/partition=0/"
     
     try:
         response = s3_client.list_objects_v2(
