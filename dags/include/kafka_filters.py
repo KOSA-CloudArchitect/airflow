@@ -31,6 +31,8 @@ def any_message_ok(message=None):
     print("[ANY] got:", s[:1000], flush=True)  # ← 반드시 트리거러 로그에 찍혀야 함
     return True
 
+from airflow.exceptions import AirflowException
+
 def control_message_check(expected_job_id, expected_step, message):
     """Control 토픽 메시지 필터링 함수
     
@@ -57,12 +59,13 @@ def control_message_check(expected_job_id, expected_step, message):
     step = payload.get("step")
     status = str(payload.get("status", "")).lower()
     
-    # 조건 검사
-    is_match = (
-        job_id == expected_job_id and 
-        step == expected_step and 
-        status == "done"
-    )
+    # 실패 즉시 예외 발생
+    if job_id == expected_job_id and step == expected_step and status in {"fail", "failed", "error"}:
+        err = payload.get("error_message") or payload
+        raise AirflowException(f"Job {job_id} failed at {step}: {err}")
+
+    # 성공 조건 검사
+    is_match = (job_id == expected_job_id and step == expected_step and status == "done")
     
     print(f"[control_sensor] check: expected_job_id={expected_job_id}, expected_step={expected_step}")
     print(f"[control_sensor] received: job_id={job_id}, step={step}, status={status} -> {is_match}", flush=True)

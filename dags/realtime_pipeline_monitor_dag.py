@@ -206,7 +206,7 @@ with DAG(
         ],
         poll_timeout=1,
         poll_interval=30,  # 30초마다 체크
-        execution_timeout=timedelta(minutes=60),  # 60분 타임아웃
+        execution_timeout=timedelta(minutes=3),  # 60분 타임아웃
         xcom_push_key="collection_message",
         retries=0,
         on_failure_callback=handle_step_failure
@@ -224,7 +224,7 @@ with DAG(
         ],
         poll_timeout=1,
         poll_interval=30,
-        execution_timeout=timedelta(minutes=30),  # 30분 타임아웃
+        execution_timeout=timedelta(minutes=3),  # 30분 타임아웃
         xcom_push_key="transform_message",
         retries=0,
         on_failure_callback=handle_step_failure
@@ -242,7 +242,7 @@ with DAG(
         ],
         poll_timeout=1,
         poll_interval=30,
-        execution_timeout=timedelta(minutes=45),  # 45분 타임아웃
+        execution_timeout=timedelta(minutes=3),  # 45분 타임아웃
         xcom_push_key="analysis_message",
         retries=0,
         on_failure_callback=handle_step_failure
@@ -260,7 +260,7 @@ with DAG(
         ],
         poll_timeout=1,
         poll_interval=30,
-        execution_timeout=timedelta(minutes=15),  # 15분 타임아웃
+        execution_timeout=timedelta(minutes=3),  # 15분 타임아웃
         xcom_push_key="aggregation_message",
         retries=0,
         on_failure_callback=handle_step_failure
