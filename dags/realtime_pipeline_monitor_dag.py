@@ -298,7 +298,7 @@ with DAG(
     )
 
     # 작업 순서 정의 (병렬 처리 포함)
-    prepare_crawler_request_task >> call_crawler >> wait_collection >> [wait_transform, wait_analysis] >> wait_aggregation >> notify_and_prepare_redshift >> trigger_redshift_dag
+    prepare_crawler_request_task >> [call_crawler, wait_collection] >> [wait_transform, wait_analysis, wait_aggregation] >> notify_and_prepare_redshift >> trigger_redshift_dag
 
 """
 DAG 실행 방법:
