@@ -5,7 +5,7 @@ from airflow.providers.apache.kafka.sensors.kafka import AwaitMessageSensor
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.models.xcom_arg import XComArg
 from airflow.providers.standard.sensors.time_delta import TimeDeltaSensorAsync
-from airflow.operators.fail import FailOperator
+from airflow.exceptions import AirflowException
 from datetime import datetime, timedelta
 import logging
 import json
@@ -28,6 +28,10 @@ def log_crawler_callback(context):
     
     # XCom에 실행 시간 저장
     context['task_instance'].xcom_push(key='crawler_execution_time', value=current_time_kst.isoformat())
+
+def raise_timeout_exception(step: str, **_):
+    """타임아웃 실패를 강제하기 위한 헬퍼"""
+    raise AirflowException(f"{step} step timed out")
 
 def determine_crawler_type(conf):
     """크롤링 타입을 결정하는 함수
@@ -227,8 +231,10 @@ with DAG(
         task_id="timeout_collection",
         delta=timedelta(minutes=3)
     )
-    fail_collection_timeout = FailOperator(
-        task_id="fail_collection_timeout"
+    fail_collection_timeout = PythonOperator(
+        task_id="fail_collection_timeout",
+        python_callable=raise_timeout_exception,
+        op_args=["collection"]
     )
     timeout_collection >> fail_collection_timeout
 
@@ -254,8 +260,10 @@ with DAG(
         task_id="timeout_transform",
         delta=timedelta(minutes=3)
     )
-    fail_transform_timeout = FailOperator(
-        task_id="fail_transform_timeout"
+    fail_transform_timeout = PythonOperator(
+        task_id="fail_transform_timeout",
+        python_callable=raise_timeout_exception,
+        op_args=["transform"]
     )
     timeout_transform >> fail_transform_timeout
 
@@ -281,8 +289,10 @@ with DAG(
         task_id="timeout_analysis",
         delta=timedelta(minutes=3)
     )
-    fail_analysis_timeout = FailOperator(
-        task_id="fail_analysis_timeout"
+    fail_analysis_timeout = PythonOperator(
+        task_id="fail_analysis_timeout",
+        python_callable=raise_timeout_exception,
+        op_args=["analysis"]
     )
     timeout_analysis >> fail_analysis_timeout
 
@@ -308,8 +318,10 @@ with DAG(
         task_id="timeout_aggregation",
         delta=timedelta(minutes=3)
     )
-    fail_aggregation_timeout = FailOperator(
-        task_id="fail_aggregation_timeout"
+    fail_aggregation_timeout = PythonOperator(
+        task_id="fail_aggregation_timeout",
+        python_callable=raise_timeout_exception,
+        op_args=["aggregation"]
     )
     timeout_aggregation >> fail_aggregation_timeout
 
