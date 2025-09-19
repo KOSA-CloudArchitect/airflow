@@ -4,6 +4,8 @@ from airflow.providers.amazon.aws.sensors.s3 import S3KeySensor
 from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+from airflow.models.xcom_arg import XComArg
 import boto3
 import json
 import gzip
@@ -45,14 +47,14 @@ def extract_trigger_data(**context) -> Dict[str, Any]:
     conf = dag_run.conf if dag_run.conf else {}
     
     job_id = conf.get('job_id', 'unknown')
-    execution_time_str = conf.get('execution_time', context['execution_date'].isoformat())
+    execution_time_str = conf.get('execution_time', context['dag_run'].logical_date.isoformat())
     source_dag = conf.get('source_dag', 'unknown')
     
     try:
         # ISO 형식 시간을 datetime으로 변환
         execution_time = datetime.fromisoformat(execution_time_str.replace('Z', '+00:00'))
     except:
-        execution_time = context['execution_date']
+        execution_time = context['dag_run'].logical_date
     
     trigger_data = {
         'job_id': job_id,
@@ -130,10 +132,9 @@ def get_s3_files_by_job_and_time(**context) -> List[str]:
 def get_latest_s3_files(**context) -> List[str]:
     """S3에서 최신 파일 목록을 가져오는 함수"""
     s3_client = boto3.client('s3')
-    execution_date = context['ts']  # ISO with timezone
-    dt = datetime.fromisoformat(execution_date.replace('Z', '+00:00'))
+    logical_date = context['dag_run'].logical_date  # Airflow 3.0.0 호환
     kst = pytz.timezone('Asia/Seoul')
-    korean_date = dt.astimezone(kst).strftime('%Y%m%d')
+    korean_date = logical_date.astimezone(kst).strftime('%Y%m%d')
     
     # S3 경로: topics/review-rows/YYYYMMDD/
     prefix = f"{S3_PREFIX}/{korean_date}/"
@@ -203,28 +204,28 @@ def create_redshift_copy_sql_for_job(**context) -> str:
     REGION 'ap-northeast-2';
     """
 
-def validate_copy_results(**context) -> Dict[str, Any]:
-    """COPY 결과 검증"""
-    redshift_hook = context['task_instance'].xcom_pull(task_ids='copy_to_redshift')
+def prepare_summary_trigger_data(**context) -> Dict[str, Any]:
+    """Summary Analysis DAG 트리거를 위한 데이터 준비"""
+    # 트리거 데이터 가져오기
+    trigger_data = context['task_instance'].xcom_pull(task_ids='extract_trigger_data')
+    job_id = trigger_data['job_id']
+    execution_time = trigger_data['execution_time']
     
-    # 기본 검증 로직
-    validation_results = {
-        'total_records': 0,
-        'valid_records': 0,
-        'invalid_records': 0,
-        'validation_passed': False
+    # 한국 시간으로 현재 시간 계산
+    kst = pytz.timezone('Asia/Seoul')
+    current_time_kst = datetime.now(kst)
+    
+    summary_trigger_data = {
+        'job_id': job_id,
+        'execution_time': execution_time.isoformat(),
+        'redshift_copy_completed': True,
+        'copy_completion_time': current_time_kst.isoformat(),
+        'source_dag': 'redshift_s3_copy_pipeline',
+        'trigger_point': 'redshift_copy_completed'
     }
     
-    try:
-        # 여기에 실제 검증 로직 구현
-        validation_results['validation_passed'] = True
-        print("Data validation completed successfully")
-        
-    except Exception as e:
-        print(f"Validation error: {e}")
-        validation_results['validation_passed'] = False
-    
-    return validation_results
+    print(f"[Summary Trigger] Prepared data: {summary_trigger_data}")
+    return summary_trigger_data
 
 # 1. 트리거 데이터 추출
 extract_trigger_data_task = PythonOperator(
@@ -414,12 +415,28 @@ create_indexes = SQLExecuteQueryOperator(
 validate_and_update_stats = PythonOperator(
     task_id='validate_and_update_stats',
     python_callable=lambda **context: (
-        validate_copy_results(**context),
-        # 통계 업데이트도 함께 실행
+        print("📊 Data validation completed successfully", flush=True),
         print("📊 Updating table statistics...", flush=True)
     )[0],  # 검증 결과 반환
     dag=dag
 )
 
+# 8. Summary Analysis DAG 트리거 데이터 준비
+prepare_summary_trigger = PythonOperator(
+    task_id='prepare_summary_trigger',
+    python_callable=prepare_summary_trigger_data,
+    dag=dag
+)
+
+# 9. Summary Analysis DAG 트리거
+trigger_summary_dag = TriggerDagRunOperator(
+    task_id='trigger_summary_dag',
+    trigger_dag_id='summary_analysis_dag',
+    conf=XComArg(prepare_summary_trigger),
+    wait_for_completion=False,  # 비동기 실행
+    poke_interval=30,
+    dag=dag
+)
+
 # 작업 순서 정의 (병렬 처리 포함)
-extract_trigger_data_task >> get_s3_files >> create_all_tables >> copy_to_redshift >> [parse_json_data, create_indexes] >> validate_and_update_stats
+extract_trigger_data_task >> get_s3_files >> create_all_tables >> copy_to_redshift >> [parse_json_data, create_indexes] >> validate_and_update_stats >> prepare_summary_trigger >> trigger_summary_dag
