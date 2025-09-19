@@ -80,12 +80,19 @@ def control_message_check(expected_job_id, expected_step, message, min_timestamp
     # 성공 조건 검사
     is_match = (job_id == expected_job_id and step == expected_step and status == "done")
 
-    # 최소 타임스탬프가 있으면 필터링 (센서 시작 전 메시지 무시)
+    # 타임스탬프 필터링 - 24시간 이내 메시지는 허용
+    # (메시지 발송 시간과 센서 시작 시간의 차이로 인한 문제 해결)
     if is_match and min_ts and event_ts and event_ts < min_ts:
-        print(f"[control_sensor] skip old event: event_ts={event_ts.isoformat()} < min_ts={min_ts.isoformat()}", flush=True)
-        return None
+        # 24시간 이내 메시지는 허용
+        time_diff_hours = (datetime.now() - event_ts).total_seconds() / 3600
+        if time_diff_hours <= 24:
+            print(f"[control_sensor] allow recent event: event_ts={event_ts.isoformat()} < min_ts={min_ts.isoformat()} (within 24h: {time_diff_hours:.1f}h)", flush=True)
+        else:
+            print(f"[control_sensor] skip old event: event_ts={event_ts.isoformat()} < min_ts={min_ts.isoformat()} (too old: {time_diff_hours:.1f}h)", flush=True)
+            return None
     
     print(f"[control_sensor] check: expected_job_id={expected_job_id}, expected_step={expected_step}")
     print(f"[control_sensor] received: job_id={job_id}, step={step}, status={status} -> {is_match}", flush=True)
+    print(f"[control_sensor] DEBUG - event_ts={event_ts}, min_ts={min_ts}, current_year={datetime.now().year}", flush=True)
     
     return payload if is_match else None
