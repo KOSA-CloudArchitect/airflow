@@ -149,7 +149,7 @@ copy_to_redshift = RedshiftDataOperator(
     )
     FROM '{{ ti.xcom_pull(task_ids="get_s3_files_all") | first }}'
     IAM_ROLE '{{ params.iam_role }}'
-    JSON 'auto'
+    JSON 's3://hihypipe-raw-data/jsonpath/review-rows.jsonpath'
     GZIP
     COMPUPDATE OFF
     STATUPDATE OFF
