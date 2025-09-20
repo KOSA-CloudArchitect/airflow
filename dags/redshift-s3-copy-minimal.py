@@ -146,8 +146,8 @@ get_s3_files = PythonOperator(
 # 3. S3에서 Redshift로 데이터 복사 (job_id 기준)
 copy_to_redshift = RedshiftDataOperator(
     task_id='copy_to_redshift',
-    cluster_identifier='hihypipe-redshift-workgroup',
-    database='public',
+    workgroup_name='hihypipe-redshift-workgroup',
+    database='hihypipe',
     sql="""
     COPY {{ params.schema }}.{{ params.table }} (
         review_id, job_id, product_id, product_title, product_category, product_rating, review_count,
