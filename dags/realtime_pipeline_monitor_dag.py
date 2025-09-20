@@ -78,27 +78,33 @@ def build_crawler_request_payload(conf):
         
     else:
         # 단일 상품 크롤링
-        product_id = conf.get('product_id')
+        product_id = conf.get('product_id')  # 선택적 필드
         url = conf.get('url')
         review_cnt = conf.get('review_cnt', 0)
         
-        if not product_id or not url:
-            raise ValueError("단일 상품 크롤링을 위해서는 product_id와 url이 필요합니다.")
+        if not url:
+            raise ValueError("단일 상품 크롤링을 위해서는 url이 필요합니다.")
         
         endpoint = "/crawl/product_one"
         request_data = {
-            "product_id": product_id,
             "url": url,
             "job_id": job_id,
             "review_cnt": review_cnt
         }
         
-        logging.info(f"[Single Crawler] endpoint={endpoint}, product_id={product_id}")
+        # product_id가 있으면 추가
+        if product_id:
+            request_data["product_id"] = product_id
+        
+        logging.info(f"[Single Crawler] endpoint={endpoint}, url={url}, product_id={product_id or 'None'}")
     
     return endpoint, request_data
 
 def call_crawler_dynamic(**context):
     """동적으로 크롤러 API를 호출하는 함수"""
+    import requests
+    from airflow.hooks.base import BaseHook
+    
     conf = context['dag_run'].conf or {}
     
     try:
@@ -107,14 +113,41 @@ def call_crawler_dynamic(**context):
         logging.info(f"[Dynamic Crawler] Calling endpoint: {endpoint}")
         logging.info(f"[Dynamic Crawler] Request data: {request_data}")
         
-        # 실제 HTTP 요청은 HttpOperator에서 처리되므로 여기서는 데이터만 준비
+        # 크롤러 서버 연결 정보 가져오기
+        crawler_conn = BaseHook.get_connection("crawler_server")
+        base_url = crawler_conn.host
+        if crawler_conn.port:
+            base_url = f"{base_url}:{crawler_conn.port}"
+        
+        # 실제 HTTP 요청 수행
+        url = f"{base_url}{endpoint}"
+        headers = {"Content-Type": "application/json"}
+        
+        response = requests.post(url, json=request_data, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        # 실행 시간 저장 (KST)
+        kst = pytz.timezone('Asia/Seoul')
+        execution_time_kst = datetime.now(kst)
+        
+        # XCom에 실행 시간 저장
+        context['task_instance'].xcom_push(
+            key='crawler_execution_time',
+            value=execution_time_kst.isoformat()
+        )
+        
+        logging.info(f"[Dynamic Crawler] Response: {response.status_code}")
+        print(f"✅ Crawler request completed successfully", flush=True)
+        
         return {
-            'endpoint': endpoint,
-            'data': request_data
+            'status': 'success',
+            'response_code': response.status_code,
+            'execution_time': execution_time_kst.isoformat()
         }
         
     except Exception as e:
-        logging.error(f"[Dynamic Crawler] Error preparing request: {e}")
+        logging.error(f"[Dynamic Crawler] Error calling crawler: {e}")
+        print(f"❌ Crawler request failed: {e}", flush=True)
         raise
 
 # Control 토픽 메시지 필터링 함수는 include/kafka_filters.py에서 import
@@ -188,22 +221,13 @@ with DAG(
     tags=["pipeline", "monitor", "control-topic", "realtime"]
 ) as dag:
 
-    # 1. 크롤링 타입 결정 및 요청 데이터 준비
-    prepare_crawler_request_task = PythonOperator(
-        task_id="prepare_crawler_request",
-        python_callable=call_crawler_dynamic,
-    )
-
-    # 2. Crawler 서버에 동적 HTTP 요청
-    call_crawler = HttpOperator(
+    # 1. Crawler 서버에 동적 HTTP 요청 (데이터 준비 포함)
+    call_crawler = PythonOperator(
         task_id="call_crawler",
-        http_conn_id="crawler_server",  # 실제 크롤러 서버 연결 ID
-        endpoint="{{ ti.xcom_pull(task_ids='prepare_crawler_request')['endpoint'] }}",
-        method="POST",
-        data="{{ ti.xcom_pull(task_ids='prepare_crawler_request')['data'] | tojson }}",
-        headers={"Content-Type": "application/json"},
-        on_execute_callback=log_crawler_callback,
-        log_response=True,
+        python_callable=lambda **context: (
+            print("🚀 Starting crawler request...", flush=True),
+            call_crawler_dynamic(**context)
+        )[1],  # call_crawler_dynamic의 결과 반환
     )
 
     # 3. Collection 단계 완료 대기
@@ -278,37 +302,38 @@ with DAG(
         on_failure_callback=handle_step_failure
     )
 
-    # 7. 완료 알림 및 Redshift 트리거 데이터 준비 (통합)
-    notify_and_prepare_redshift = PythonOperator(
-        task_id="notify_and_prepare_redshift",
-        python_callable=lambda **context: (
-            print("🎉 All pipeline steps completed successfully!", flush=True),
-            prepare_redshift_trigger_data(**context)
-        )[1],  # prepare_redshift_trigger_data의 결과 반환
-    )
-
-    # 8. Redshift DAG 트리거
+    # 7. Redshift DAG 트리거 (데이터 준비 포함)
     trigger_redshift_dag = TriggerDagRunOperator(
         task_id="trigger_redshift_dag",
         trigger_dag_id="redshift_s3_copy_pipeline",
-        conf=XComArg(notify_and_prepare_redshift),
+        conf={
+            'job_id': "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}",
+            'execution_time': "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}",
+            'dag_run_id': "{{ dag_run.run_id }}",
+            'source_dag': 'realtime_pipeline_monitor',
+            'trigger_point': 'call_crawler'
+        },
         wait_for_completion=False,  # 비동기 실행
         poke_interval=30,
         dag=dag
     )
 
     # 작업 순서 정의 (병렬 처리 포함)
-    prepare_crawler_request_task >> call_crawler
-    prepare_crawler_request_task >> wait_collection
     call_crawler >> wait_collection
-    wait_collection >> [wait_transform, wait_analysis]
-    [wait_transform, wait_analysis] >> wait_aggregation
-    wait_aggregation >> notify_and_prepare_redshift >> trigger_redshift_dag
+    wait_collection >> [wait_transform, wait_analysis, wait_aggregation]
+    [wait_transform, wait_analysis, wait_aggregation] >> trigger_redshift_dag
 
 """
 DAG 실행 방법:
 
 1. 단일 상품 크롤링 (기본):
+   airflow dags trigger realtime_pipeline_monitor --conf '{
+     "job_id": "job-2024-001",
+     "url": "https://example.com/product/123",
+     "review_cnt": 100
+   }'
+
+1-1. 단일 상품 크롤링 (product_id 포함):
    airflow dags trigger realtime_pipeline_monitor --conf '{
      "job_id": "job-2024-001",
      "product_id": "product-123",
@@ -336,7 +361,6 @@ DAG 실행 방법:
         -d '{
           "conf": {
             "job_id": "job-2024-001",
-            "product_id": "product-123",
             "url": "https://example.com/product/123",
             "review_cnt": 100
           }
