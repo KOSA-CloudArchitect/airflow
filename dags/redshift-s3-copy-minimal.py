@@ -154,7 +154,6 @@ copy_to_redshift = RedshiftDataOperator(
     GZIP
     COMPUPDATE OFF
     STATUPDATE OFF
-    NULL AS '\\N'
     EMPTYASNULL
     BLANKSASNULL
     DATEFORMAT 'auto'
