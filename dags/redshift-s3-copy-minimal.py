@@ -149,7 +149,7 @@ copy_to_redshift = RedshiftDataOperator(
         yyyymmdd, weekday, review_summary, sentiment_score, crawled_at
     )
     FROM '{{ ti.xcom_pull(task_ids="get_s3_files_by_time") | first }}'
-    IAM_ROLE 'arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role'
+    IAM_ROLE '{{ params.iam_role }}'
     JSON 'auto'
     GZIP
     COMPUPDATE OFF
@@ -173,7 +173,8 @@ copy_to_redshift = RedshiftDataOperator(
     """,
     params={
         'schema': REDSHIFT_SCHEMA,
-        'table': REDSHIFT_TABLE
+        'table': REDSHIFT_TABLE,
+        'iam_role': 'arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role'
     },
     aws_conn_id='aws_default',
     retries=3,
