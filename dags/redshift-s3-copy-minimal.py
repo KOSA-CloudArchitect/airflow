@@ -139,8 +139,21 @@ copy_to_redshift = RedshiftDataOperator(
     workgroup_name='hihypipe-redshift-workgroup',
     database='hihypipe',
     sql="""
+    -- 디버깅용: 현재 데이터베이스와 테이블 확인
+    SELECT current_database(), current_schema();
+    
+    -- 테이블 존재 여부 확인
+    SELECT COUNT(*) as table_exists 
+    FROM information_schema.tables 
+    WHERE table_schema = '{{ params.schema }}' 
+    AND table_name = '{{ params.table }}';
+    
+    -- 실제 COPY 명령 (일별/월별 집계용 최소 컬럼)
     COPY {{ params.schema }}.{{ params.table }} (
-        job_id
+        review_date, product_id, job_id, product_title, product_category, 
+        product_rating, review_count, sales_price, final_price, review_rating,
+        review_text, clean_text, review_summary, sentiment_score,
+        year, month, day, quarter, yyyymm, yyyymmdd, weekday, crawled_at
     )
     FROM '{{ ti.xcom_pull(task_ids="get_s3_files_all") | first }}'
     IAM_ROLE '{{ params.iam_role }}'
@@ -159,7 +172,7 @@ copy_to_redshift = RedshiftDataOperator(
     """,
     params={
         'schema': 'public',
-        'table': 'test_review_collection',
+        'table': 'daily_review_summary',
         'iam_role': "arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role"
     },
     aws_conn_id='aws_default',
