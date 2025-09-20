@@ -165,8 +165,10 @@ def create_redshift_copy_sql_for_job(**context) -> str:
     files = context['task_instance'].xcom_pull(task_ids='get_s3_files_by_job_and_time')
     
     if not files:
+        print(f"[ERROR] No files found for job_id: {job_id}")
         return f"-- No files found for job_id: {job_id}"
     
+    print(f"[INFO] Found {len(files)} files for job_id: {job_id}")
     file_list = "', '".join(files)
     
     return f"""
@@ -181,7 +183,7 @@ def create_redshift_copy_sql_for_job(**context) -> str:
         yyyymmdd, weekday, summary, sentiment, crawled_at
     )
     FROM ('{file_list}')
-    IAM_ROLE 'arn:aws:iam::ACCOUNT_ID:role/RedshiftRole'
+    IAM_ROLE 'arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role'
     JSON 'auto'
     GZIP
     COMPUPDATE OFF
@@ -315,6 +317,8 @@ copy_to_redshift = SQLExecuteQueryOperator(
     task_id='copy_to_redshift',
     sql=create_redshift_copy_sql_for_job,
     conn_id='redshift_default',
+    retries=3,
+    retry_delay=timedelta(minutes=2),
     dag=dag
 )
 
