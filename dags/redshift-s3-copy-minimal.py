@@ -77,18 +77,18 @@ def extract_job_id_from_s3_file(s3_key: str) -> str:
         print(f"Error extracting job_id from {s3_key}: {e}")
         return 'unknown'
 
-def get_s3_files_by_time(**context) -> List[str]:
-    """특정 시간 이후의 S3 파일 목록을 가져오는 함수 (job_id 필터링 제거)"""
+def get_s3_files_all(**context) -> List[str]:
+    """테스트용: 해당 폴더의 모든 S3 파일 목록을 가져오는 함수 (시간 필터링 제거)"""
     s3_client = boto3.client('s3')
     
-    # 트리거 데이터 가져오기
+    # 트리거 데이터 가져오기 (날짜만 사용)
     trigger_data = context['task_instance'].xcom_pull(task_ids='extract_trigger_data')
     execution_time_str = trigger_data['execution_time']  # 문자열로 받음
     
     # 문자열을 datetime으로 변환
     execution_time = datetime.fromisoformat(execution_time_str.replace('Z', '+00:00'))
     
-    print(f"[S3 Filter] Looking for files after {execution_time} (no job_id filtering)")
+    print(f"[S3 Filter] TEST MODE: Getting ALL files (no time filtering)")
     
     # 날짜 추출 (YYYYMMDD 형식, KST 기준) 및 접두사 구성
     kst = ZoneInfo('Asia/Seoul')
@@ -101,23 +101,22 @@ def get_s3_files_by_time(**context) -> List[str]:
     if 'Contents' in response:
         for obj in response['Contents']:
             if obj['Key'].endswith('.json.gz'):
-                last_modified = obj['LastModified']
-                
-                # 시간 기준 필터링만 (job_id 필터링 제거)
-                if last_modified >= execution_time:
-                    files.append({
-                        's3_path': f"s3://{S3_BUCKET}/{obj['Key']}",
-                        'last_modified': last_modified,
-                        'size': obj['Size']
-                    })
-                    print(f"[S3 Filter] Added file: {obj['Key']} (modified: {last_modified})")
-                else:
-                    print(f"[S3 Filter] Skipped file: {obj['Key']} (too old: {last_modified} < {execution_time})")
+                files.append({
+                    's3_path': f"s3://{S3_BUCKET}/{obj['Key']}",
+                    'last_modified': obj['LastModified'],
+                    'size': obj['Size']
+                })
+                print(f"[S3 Filter] Added file: {obj['Key']} (size: {obj['Size']}, modified: {obj['LastModified']})")
     
     # 파일 크기순 정렬
     files.sort(key=lambda x: x['size'], reverse=True)
     
-    print(f"[S3 Filter] Found {len(files)} files after {execution_time}")
+    print(f"[S3 Filter] Found {len(files)} files in total (TEST MODE)")
+    
+    # 디버깅을 위한 상세 정보 출력
+    for i, file in enumerate(files[:5]):  # 처음 5개 파일 출력
+        print(f"[S3 Filter] File {i+1}: {file['s3_path']} (size: {file['size']}, modified: {file['last_modified']})")
+    
     return [file['s3_path'] for file in files]
 
 # 1. 트리거 데이터 추출
@@ -127,10 +126,10 @@ extract_trigger_data_task = PythonOperator(
     dag=dag
 )
 
-# 2. S3 파일 목록 가져오기 (시간 기준만, job_id 필터링 제거)
+# 2. S3 파일 목록 가져오기 (테스트용: 모든 파일)
 get_s3_files = PythonOperator(
-    task_id='get_s3_files_by_time',
-    python_callable=get_s3_files_by_time,
+    task_id='get_s3_files_all',
+    python_callable=get_s3_files_all,
     dag=dag
 )
 
@@ -148,7 +147,7 @@ copy_to_redshift = RedshiftDataOperator(
         is_valid, invalid_reason, year, month, day, quarter, yyyymm,
         yyyymmdd, weekday, review_summary, sentiment_score, crawled_at
     )
-    FROM '{{ ti.xcom_pull(task_ids="get_s3_files_by_time") | first }}'
+    FROM '{{ ti.xcom_pull(task_ids="get_s3_files_all") | first }}'
     IAM_ROLE '{{ params.iam_role }}'
     JSON 'auto'
     GZIP
@@ -166,7 +165,7 @@ copy_to_redshift = RedshiftDataOperator(
     params={
         'schema': REDSHIFT_SCHEMA,
         'table': REDSHIFT_TABLE,
-        'iam_role': 'arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role'
+        'iam_role': "arn:aws:iam::914215749228:role/hihypipe-redshif"
     },
     aws_conn_id='aws_default',
     retries=3,
