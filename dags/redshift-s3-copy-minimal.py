@@ -154,7 +154,6 @@ copy_to_redshift = RedshiftDataOperator(
     GZIP
     COMPUPDATE OFF
     STATUPDATE OFF
-    TRUNCATECOLUMNS
     NULL AS '\\N'
     EMPTYASNULL
     BLANKSASNULL
@@ -162,9 +161,6 @@ copy_to_redshift = RedshiftDataOperator(
     TIMEFORMAT 'auto'
     ACCEPTINVCHARS
     ACCEPTANYDATE
-    IGNOREBLANKLINES
-    TRIMBLANKS
-    FILLRECORD
     MAXERROR 1000
     REGION 'ap-northeast-2';
     """,
