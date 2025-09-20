@@ -140,16 +140,11 @@ copy_to_redshift = RedshiftDataOperator(
     database='hihypipe',
     sql="""
     COPY {{ params.schema }}.{{ params.table }} (
-        review_id, job_id, product_id, product_title, product_category, product_rating, review_count,
-        sales_price, final_price, review_date, review_text,
-        clean_text, review_help_count, is_coupang_trial,
-        is_empty_review, is_valid_rating, is_valid_date, has_content,
-        is_valid, year, month, day, quarter, yyyymm,
-        yyyymmdd, weekday, review_summary, sentiment_score, crawled_at
+        job_id
     )
     FROM '{{ ti.xcom_pull(task_ids="get_s3_files_all") | first }}'
     IAM_ROLE '{{ params.iam_role }}'
-    JSON 's3://hihypipe-raw-data/jsonpath/review-rows.jsonpath'
+    JSON 'auto'
     GZIP
     COMPUPDATE OFF
     STATUPDATE OFF
@@ -163,8 +158,8 @@ copy_to_redshift = RedshiftDataOperator(
     REGION 'ap-northeast-2';
     """,
     params={
-        'schema': REDSHIFT_SCHEMA,
-        'table': REDSHIFT_TABLE,
+        'schema': 'public',
+        'table': 'test_review_collection',
         'iam_role': "arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role"
     },
     aws_conn_id='aws_default',
