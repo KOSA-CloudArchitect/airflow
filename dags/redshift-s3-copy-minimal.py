@@ -165,7 +165,7 @@ copy_to_redshift = RedshiftDataOperator(
     params={
         'schema': REDSHIFT_SCHEMA,
         'table': REDSHIFT_TABLE,
-        'iam_role': "arn:aws:iam::914215749228:role/hihypipe-redshif"
+        'iam_role': "arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role"
     },
     aws_conn_id='aws_default',
     retries=3,
