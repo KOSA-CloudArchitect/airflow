@@ -157,7 +157,7 @@ copy_to_redshift = RedshiftDataOperator(
         is_valid, invalid_reason, year, month, day, quarter, yyyymm,
         yyyymmdd, weekday, review_summary, sentiment_score, crawled_at
     )
-    FROM ('{{ ti.xcom_pull(task_ids="get_s3_files_by_job_and_time") | join("', '") }}')
+    FROM {{ ti.xcom_pull(task_ids="get_s3_files_by_job_and_time") | join(", ") }}
     IAM_ROLE 'arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role'
     JSON 'auto'
     GZIP
