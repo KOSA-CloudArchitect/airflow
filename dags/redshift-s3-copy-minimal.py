@@ -155,9 +155,6 @@ copy_to_redshift = RedshiftDataOperator(
     COMPUPDATE OFF
     STATUPDATE OFF
     TRUNCATECOLUMNS
-    IGNOREHEADER 0
-    DELIMITER ','
-    ESCAPE
     NULL AS '\\N'
     EMPTYASNULL
     BLANKSASNULL
