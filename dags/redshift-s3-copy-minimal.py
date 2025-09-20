@@ -141,10 +141,10 @@ copy_to_redshift = RedshiftDataOperator(
     sql="""
     COPY {{ params.schema }}.{{ params.table }} (
         review_id, job_id, product_id, product_title, product_category, product_rating, review_count,
-        sales_price, final_price, review_rating, review_date, review_text,
-        clean_text, keywords, review_help_count, is_coupang_trial,
+        sales_price, final_price, review_date, review_text,
+        clean_text, review_help_count, is_coupang_trial,
         is_empty_review, is_valid_rating, is_valid_date, has_content,
-        is_valid, invalid_reason, year, month, day, quarter, yyyymm,
+        is_valid, year, month, day, quarter, yyyymm,
         yyyymmdd, weekday, review_summary, sentiment_score, crawled_at
     )
     FROM '{{ ti.xcom_pull(task_ids="get_s3_files_all") | first }}'
