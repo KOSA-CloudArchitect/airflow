@@ -302,10 +302,10 @@ with DAG(
         on_failure_callback=handle_step_failure
     )
 
-    # 7. Redshift DAG 트리거 (데이터 준비 포함)
+    # 7. Redshift DAG 트리거 (최소화된 데이터 COPY만)
     trigger_redshift_dag = TriggerDagRunOperator(
         task_id="trigger_redshift_dag",
-        trigger_dag_id="redshift_s3_copy_pipeline",
+        trigger_dag_id="redshift_s3_copy_minimal",
         conf={
             'job_id': "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}",
             'execution_time': "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}",

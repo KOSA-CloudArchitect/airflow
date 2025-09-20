@@ -5,7 +5,7 @@ from airflow.operators.python import PythonOperator
 import boto3
 import json
 import gzip
-import pytz
+from zoneinfo import ZoneInfo
 from typing import List, Dict, Any
 
 # 기본 설정
@@ -52,9 +52,10 @@ def extract_trigger_data(**context) -> Dict[str, Any]:
     except:
         execution_time = context['dag_run'].logical_date
     
+    # XCom 호환성을 위해 datetime을 문자열로 저장
     trigger_data = {
         'job_id': job_id,
-        'execution_time': execution_time,
+        'execution_time': execution_time.isoformat(),  # 문자열로 저장
         'execution_time_str': execution_time_str,
         'source_dag': source_dag
     }
@@ -83,12 +84,15 @@ def get_s3_files_by_job_and_time(**context) -> List[str]:
     # 트리거 데이터 가져오기
     trigger_data = context['task_instance'].xcom_pull(task_ids='extract_trigger_data')
     job_id = trigger_data['job_id']
-    execution_time = trigger_data['execution_time']
+    execution_time_str = trigger_data['execution_time']  # 문자열로 받음
+    
+    # 문자열을 datetime으로 변환
+    execution_time = datetime.fromisoformat(execution_time_str.replace('Z', '+00:00'))
     
     print(f"[S3 Filter] Looking for files with job_id='{job_id}' after {execution_time}")
     
     # 날짜 추출 (YYYYMMDD 형식, KST 기준) 및 접두사 구성
-    kst = pytz.timezone('Asia/Seoul')
+    kst = ZoneInfo('Asia/Seoul')
     execution_date = execution_time.astimezone(kst).strftime('%Y%m%d')
     prefix = f"{S3_PREFIX}/{execution_date}/"
     
