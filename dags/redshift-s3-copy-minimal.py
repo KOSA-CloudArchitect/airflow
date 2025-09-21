@@ -271,15 +271,18 @@ def query_redshift_aggregations(**context) -> Dict[str, Any]:
             sql=daily_query
         )
         
-        # 결과 정리
+        # 결과 정리 (QueryExecutionOutput에서 실제 데이터 추출)
+        monthly_data = monthly_result.records if hasattr(monthly_result, 'records') else []
+        daily_data = daily_result.records if hasattr(daily_result, 'records') else []
+        
         aggregation_data = {
             'job_id': job_id,
             'query_timestamp': datetime.now().isoformat(),
-            'monthly_stats': monthly_result,
-            'daily_stats': daily_result
+            'monthly_stats': monthly_data,
+            'daily_stats': daily_data
         }
         
-        print(f"[Redshift Query] Completed aggregation queries. Monthly: {len(monthly_result)} records, Daily: {len(daily_result)} records")
+        print(f"[Redshift Query] Completed aggregation queries. Monthly: {len(monthly_data)} records, Daily: {len(daily_data)} records")
         
         # XCom에 저장
         context['task_instance'].xcom_push(key='aggregation_data', value=aggregation_data)
