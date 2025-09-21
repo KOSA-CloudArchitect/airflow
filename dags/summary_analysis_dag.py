@@ -11,58 +11,59 @@ import json
 import pytz
 import os
 
-def kafka_producer_function(**context):
-    """Kafka Producer 함수 - ProduceToTopicOperator에서 사용"""
-    # XCom에서 job_id와 전체 summary_message 가져오기
-    summary_message = None
-    job_id = "unknown"
+def build_kafka_message(**context):
+    """Kafka 메시지를 준비하는 함수"""
+    ti = context["ti"]
     
     try:
-        task_instance = context.get('task_instance')
-        if task_instance:
-            summary_message = task_instance.xcom_pull(
-                task_ids='prepare_summary_message',
-                key='summary_request_message'
-            )
-            if summary_message:
-                job_id = summary_message.get('job_id', 'unknown')
-                logging.info(f"[Kafka Producer] Retrieved XCom data for job_id: {job_id}")
-            else:
-                logging.warning(f"[Kafka Producer] XCom data is None")
+        summary_message = ti.xcom_pull(
+            task_ids="prepare_summary_message",
+            key="summary_request_message"
+        )
+        
+        if summary_message:
+            job_id = summary_message["job_id"]
+            json_str = json.dumps(summary_message, ensure_ascii=False)
+            
+            logging.info(f"[Kafka Message Builder] Built message for job_id: {job_id}")
+            logging.info(f"[Kafka Message Builder] Message: {json_str}")
+            
+            return [{
+                "key": job_id.encode("utf-8"),
+                "value": json_str.encode("utf-8")
+            }]
+        else:
+            logging.warning(f"[Kafka Message Builder] No summary_message found in XCom")
+            # Fallback message
+            fallback_message = {
+                "job_id": "unknown",
+                "timestamp": datetime.now().isoformat(),
+                "error": "No summary message available"
+            }
+            json_str = json.dumps(fallback_message, ensure_ascii=False)
+            
+            return [{
+                "key": "unknown".encode("utf-8"),
+                "value": json_str.encode("utf-8")
+            }]
+            
     except Exception as e:
-        logging.warning(f"[Kafka Producer] XCom access failed: {e}")
-    
-    # XCom 데이터가 있으면 사용, 없으면 job_id로 간단한 메시지 생성
-    if summary_message:
-        logging.info(f"[Kafka Producer] Using XCom data for job_id: {job_id}")
-        message_data = summary_message
-    else:
-        logging.warning(f"[Kafka Producer] Using fallback message for job_id: {job_id}")
-        message_data = {
-            "job_id": job_id,
+        logging.error(f"[Kafka Message Builder] Error building message: {e}")
+        import traceback
+        logging.error(f"[Kafka Message Builder] Traceback: {traceback.format_exc()}")
+        
+        # Error fallback message
+        error_message = {
+            "job_id": "error",
             "timestamp": datetime.now().isoformat(),
-            "message": f"Publishing summary request for {job_id}",
-            "warning": "XCom data not available"
+            "error": f"Message building failed: {str(e)}"
         }
-    
-    # JSON 직렬화
-    try:
-        json_str = json.dumps(message_data, ensure_ascii=False)
-        logging.info(f"[Kafka Producer] JSON serialization successful: {json_str}")
-    except Exception as e:
-        logging.error(f"[Kafka Producer] JSON serialization failed: {e}")
-        # 안전한 fallback
-        fallback_data = {
-            "job_id": str(job_id),
-            "timestamp": datetime.now().isoformat(),
-            "error": f"JSON serialization failed: {str(e)}"
-        }
-        json_str = json.dumps(fallback_data, ensure_ascii=False)
-    
-    return [{
-        "key": job_id.encode("utf-8"),
-        "value": json_str.encode("utf-8")
-    }]
+        json_str = json.dumps(error_message, ensure_ascii=False)
+        
+        return [{
+            "key": "error".encode("utf-8"),
+            "value": json_str.encode("utf-8")
+        }]
 
 def prepare_summary_request_message(**context):
     """Overall Summary Request 메시지 준비"""
@@ -153,12 +154,20 @@ with DAG(
         python_callable=prepare_summary_request_message,
     )
 
-    # 2. Overall Summary Request Topic에 메시지 발행
+    # 2. Kafka 메시지 준비
+    prepare_kafka_message = PythonOperator(
+        task_id="prepare_kafka_message",
+        python_callable=build_kafka_message,
+    )
+
+    # 3. Overall Summary Request Topic에 메시지 발행
     publish_summary_request = ProduceToTopicOperator(
         task_id="publish_summary_request",
         topic="overall-summary-request-topic",
         kafka_config_id="overall-summary-request-topic",
-        producer_function=kafka_producer_function,
+        producer_function=lambda **context: context["ti"].xcom_pull(
+            task_ids="prepare_kafka_message"
+        ),
     )
 
     # 3. Control Topic에서 요약 완료 메시지 센싱 대기
@@ -186,7 +195,7 @@ with DAG(
     )
 
     # 작업 순서 정의
-    prepare_summary_message >> publish_summary_request >> wait_summary_completion >> notify_completion
+    prepare_summary_message >> prepare_kafka_message >> publish_summary_request >> wait_summary_completion >> notify_completion
 
 """
 DAG 실행 방법:
