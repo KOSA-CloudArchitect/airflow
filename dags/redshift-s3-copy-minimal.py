@@ -38,10 +38,10 @@ default_args = {
 dag = DAG(
     DAG_ID,
     default_args=default_args,
-    description='MongoDB Connection Test Only - v28',
+    description='Minimal Redshift S3 COPY Pipeline (Data Copy Only) - v28 (Airflow Variables)',
     schedule=None,  # 트리거 기반 실행
     max_active_runs=1,
-    tags=['mongodb', 'test', 'connection']
+    tags=['redshift', 's3', 'copy', 'minimal', 'variables']
 )
 
 def extract_trigger_data(**context) -> Dict[str, Any]:
@@ -330,55 +330,67 @@ def save_to_mongodb(**context) -> None:
     print("[MongoDB] Using test hardcoded data for MongoDB connection test")
     print(f"[MongoDB] Test data: {aggregation_data}")
     
-    # MongoDB 연결 정보 가져오기 (환경 변수 또는 Airflow Variables)
-    mongodb_url = os.getenv('MONGODB_URL')
-    mongodb_db_name = os.getenv('MONGODB_DB_NAME')
-    mongodb_username = os.getenv('mongodb-username')
-    mongodb_password = os.getenv('mongodb-password')
-    mongodb_database = os.getenv('mongodb-database')
+    # MongoDB 연결 정보 가져오기 (Airflow Variables 우선 사용)
+    mongodb_url = None
+    mongodb_database = None
+    mongodb_username = None
+    mongodb_password = None
     
-    # Airflow Variables에서도 시도
+    # Airflow Variables에서 MongoDB 연결 정보 가져오기
+    try:
+        mongodb_url = Variable.get("MONGODB_URL", default_var=None)
+        print(f"[MongoDB Variables] MONGODB_URL: {mongodb_url}")
+    except Exception as e:
+        print(f"[MongoDB Variables] MONGODB_URL not found: {e}")
+    
+    try:
+        mongodb_database = Variable.get("MONGODB_DATABASE", default_var=None)
+        print(f"[MongoDB Variables] MONGODB_DATABASE: {mongodb_database}")
+    except Exception as e:
+        print(f"[MongoDB Variables] MONGODB_DATABASE not found: {e}")
+    
+    try:
+        mongodb_username = Variable.get("MONGODB_USERNAME", default_var=None)
+        print(f"[MongoDB Variables] MONGODB_USERNAME: {mongodb_username}")
+    except Exception as e:
+        print(f"[MongoDB Variables] MONGODB_USERNAME not found: {e}")
+    
+    try:
+        mongodb_password = Variable.get("MONGODB_PASSWORD", default_var=None)
+        print(f"[MongoDB Variables] MONGODB_PASSWORD: {'***' if mongodb_password else None}")
+    except Exception as e:
+        print(f"[MongoDB Variables] MONGODB_PASSWORD not found: {e}")
+    
+    # 환경 변수도 시도 (fallback)
     if not mongodb_url:
-        try:
-            mongodb_url = Variable.get("MONGODB_URL", default_var=None)
-        except:
-            pass
+        mongodb_url = os.getenv('MONGODB_URL')
+        print(f"[MongoDB Env] MONGODB_URL from env: {mongodb_url}")
     
     if not mongodb_database:
-        try:
-            mongodb_database = Variable.get("MONGODB_DATABASE", default_var=None)
-        except:
-            pass
-    
-    # 디버깅: 환경 변수 상태 출력
-    print(f"[MongoDB DEBUG] mongodb_url: {mongodb_url}")
-    print(f"[MongoDB DEBUG] mongodb_database: {mongodb_database}")
-    print(f"[MongoDB DEBUG] mongodb_username: {mongodb_username}")
-    print(f"[MongoDB DEBUG] mongodb_password: {'***' if mongodb_password else None}")
-    
-    # 테스트용 하드코딩 (실제 환경에서는 환경 변수 사용)
-    if not mongodb_url and not (mongodb_username and mongodb_password and mongodb_database):
-        print("[MongoDB] Using test MongoDB connection (hardcoded)")
-        mongodb_url = "mongodb://mongodb-service.web-tier.svc.cluster.local:27017/reviewdb"
-        mongodb_database = "reviewdb"
-    else:
-        print("[MongoDB] Using MongoDB connection from environment variables")
+        mongodb_database = os.getenv('MONGODB_DATABASE')
+        print(f"[MongoDB Env] MONGODB_DATABASE from env: {mongodb_database}")
     
     # MongoDB URI 구성
     if mongodb_url:
         mongodb_uri = mongodb_url
-        print("[MongoDB] Using MongoDB URL from environment variables")
-    else:
+        print("[MongoDB] Using MongoDB URL from Airflow Variables")
+    elif mongodb_username and mongodb_password and mongodb_database:
         # 개별 값들로 URI 구성
         mongodb_uri = f"mongodb://{mongodb_username}:{mongodb_password}@mongodb-service.web-tier.svc.cluster.local:27017/{mongodb_database}?authSource=admin"
-        print("[MongoDB] Using constructed MongoDB URI from individual connection parameters")
+        print("[MongoDB] Using constructed MongoDB URI from Airflow Variables")
+    else:
+        # 테스트용 하드코딩 (fallback)
+        mongodb_uri = "mongodb://mongodb-service.web-tier.svc.cluster.local:27017/reviewdb"
+        mongodb_database = "reviewdb"
+        print("[MongoDB] Using test MongoDB connection (hardcoded fallback)")
     
-    # 데이터베이스와 컬렉션 설정
-    mongodb_database = mongodb_db_name or mongodb_database
+    # 컬렉션 설정
     try:
         mongodb_collection = Variable.get("MONGODB_COLLECTION", default_var="daily_monthly_agg_collection")
-    except:
+        print(f"[MongoDB Variables] MONGODB_COLLECTION: {mongodb_collection}")
+    except Exception as e:
         mongodb_collection = "daily_monthly_agg_collection"
+        print(f"[MongoDB Variables] MONGODB_COLLECTION not found, using default: {mongodb_collection}")
     
     print(f"[MongoDB] Connection info - Database: {mongodb_database}, Collection: {mongodb_collection}")
     
@@ -405,9 +417,85 @@ def save_to_mongodb(**context) -> None:
         raise
 
 
-# MongoDB 연결 테스트만 실행
+# 1. 트리거 데이터 추출
+extract_trigger_data_task = PythonOperator(
+    task_id='extract_trigger_data',
+    python_callable=extract_trigger_data,
+    dag=dag
+)
+
+# 2. S3 파일 목록 가져오기 (테스트용: 모든 파일)
+get_s3_files = PythonOperator(
+    task_id='get_s3_files_all',
+    python_callable=get_s3_files_all,
+    dag=dag
+)
+
+# 3. S3에서 Redshift로 데이터 복사 (job_id 기준)
+copy_to_redshift = RedshiftDataOperator(
+    task_id='copy_to_redshift',
+    workgroup_name='hihypipe-redshift-workgroup',
+    database='hihypipe',
+    sql="""
+    {% set s3_files = ti.xcom_pull(task_ids="get_s3_files_all") %}
+    {% if s3_files and s3_files | select('ne', '') | list %}
+    -- 권한 부여 (필요한 경우)
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {{ params.schema }}.{{ params.table }} TO "IAMR:hihypipe-airflow-irsa";
+    
+    -- 중복 방지: 해당 날짜 데이터 삭제
+    DELETE FROM {{ params.schema }}.{{ params.table }} 
+    WHERE yyyymmdd = '20250921';
+    
+    -- 실제 COPY 명령 (실제 스키마에 맞춤)
+    COPY {{ params.schema }}.{{ params.table }} (
+        review_id, sentiment, keywords, year, rating, weekday, review_count,
+        title, crawled_at, final_price, has_content, product_id,
+        review_help_count, clean_text, day, summary, is_coupang_trial,
+        review_date, month, job_id, yyyymmdd, sales_price, is_empty_review, 
+        review_text, yyyymm, quarter, category
+    )
+    FROM 's3://hihypipe-raw-data/topics/review-rows/20250921/'
+    IAM_ROLE 'arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role'
+    JSON 'auto'
+    GZIP
+    COMPUPDATE OFF
+    STATUPDATE OFF
+    EMPTYASNULL
+    BLANKSASNULL
+    DATEFORMAT 'auto'
+    TIMEFORMAT 'auto'
+    ACCEPTINVCHARS
+    ACCEPTANYDATE
+    MAXERROR 1000
+    REGION 'ap-northeast-2';
+    {% else %}
+    -- S3 파일이 없는 경우 메시지 출력
+    SELECT 'No S3 files found for processing' as message;
+    {% endif %}
+    """,
+    params={
+        'schema': 'public',
+        'table': 'realtime_review_collection',
+        'iam_role': "arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role"
+    },
+    retries=3,
+    retry_delay=timedelta(minutes=1),
+    dag=dag
+)
+
+# 4. Redshift 집계 쿼리 실행
+query_aggregations = PythonOperator(
+    task_id='query_redshift_aggregations',
+    python_callable=query_redshift_aggregations,
+    dag=dag
+)
+
+# 5. MongoDB에 집계 데이터 저장
 save_aggregations_to_mongodb = PythonOperator(
     task_id='save_aggregations_to_mongodb',
     python_callable=save_to_mongodb,
     dag=dag
 )
+# 작업 순서 정의 (COPY 완료 후 집계 및 저장)
+extract_trigger_data_task >> get_s3_files >> copy_to_redshift >> query_aggregations >> save_aggregations_to_mongodb
+
