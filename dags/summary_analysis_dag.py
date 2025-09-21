@@ -11,14 +11,12 @@ import json
 import pytz
 import os
 
-def kafka_producer_function(job_id, **context):
+def kafka_producer_function(**context):
     """Kafka Producer 함수 - ProduceToTopicOperator에서 사용"""
-    logging.info(f"[Kafka Producer] Received job_id: {job_id}")
-    
-    # XCom에서 전체 summary_message 가져오기 시도
+    # XCom에서 job_id와 전체 summary_message 가져오기
     summary_message = None
+    job_id = "unknown"
     
-    # 방법 1: task_instance를 통한 XCom 접근
     try:
         task_instance = context.get('task_instance')
         if task_instance:
@@ -26,7 +24,11 @@ def kafka_producer_function(job_id, **context):
                 task_ids='prepare_summary_message',
                 key='summary_request_message'
             )
-            logging.info(f"[Kafka Producer] Retrieved XCom data: {summary_message}")
+            if summary_message:
+                job_id = summary_message.get('job_id', 'unknown')
+                logging.info(f"[Kafka Producer] Retrieved XCom data for job_id: {job_id}")
+            else:
+                logging.warning(f"[Kafka Producer] XCom data is None")
     except Exception as e:
         logging.warning(f"[Kafka Producer] XCom access failed: {e}")
     
@@ -157,9 +159,6 @@ with DAG(
         topic="overall-summary-request-topic",
         kafka_config_id="overall-summary-request-topic",
         producer_function=kafka_producer_function,
-        op_kwargs={
-            "job_id": "{{ ti.xcom_pull(task_ids='prepare_summary_message', key='summary_request_message')['job_id'] }}"
-        },
     )
 
     # 3. Control Topic에서 요약 완료 메시지 센싱 대기
