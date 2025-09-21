@@ -11,6 +11,29 @@ import json
 import pytz
 import os
 
+def kafka_producer_function(**context):
+    """Kafka Producer 함수 - ProduceToTopicOperator에서 사용"""
+    # XCom에서 메시지 데이터 가져오기
+    summary_message = context['task_instance'].xcom_pull(
+        task_ids='prepare_summary_message',
+        key='summary_request_message'
+    )
+    
+    # DAG 실행 정보에서 job_id 가져오기
+    dag_run = context.get("dag_run")
+    job_id = (dag_run.conf or {}).get("job_id") if dag_run else context.get("run_id", "unknown")
+    
+    # Kafka 메시지 생성
+    message = {
+        "key": job_id.encode('utf-8'),
+        "value": json.dumps(summary_message).encode('utf-8')
+    }
+    
+    logging.info(f"[Kafka Producer] Publishing message for job_id: {job_id}")
+    logging.info(f"[Kafka Producer] Message: {summary_message}")
+    
+    return [message]
+
 def prepare_summary_request_message(**context):
     """Overall Summary Request 메시지 준비"""
     dag_run = context.get("dag_run")
@@ -112,12 +135,7 @@ with DAG(
             # "sasl.username": "user",
             # "sasl.password": "pass",
         },
-        messages=[
-            {
-                "key": "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}".encode('utf-8'),
-                "value": "{{ ti.xcom_pull(task_ids='prepare_summary_message', key='summary_request_message') | tojson }}".encode('utf-8')
-            }
-        ],
+        producer_function=kafka_producer_function,
     )
 
     # 3. Control Topic에서 요약 완료 메시지 센싱 대기
