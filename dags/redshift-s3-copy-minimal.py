@@ -82,10 +82,10 @@ def extract_job_id_from_s3_file(s3_key: str) -> str:
     try:
         response = s3_client.get_object(Bucket=S3_BUCKET, Key=s3_key)
         
-        with gzip.GzipFile(fileobj=response['Body']) as gz_file:
-            first_line = gz_file.readline()
-            data = json.loads(first_line)
-            return data.get('job_id', 'unknown')
+        # .json 파일이므로 gzip 압축 해제 불필요
+        content = response['Body'].read().decode('utf-8')
+        data = json.loads(content)
+        return data.get('job_id', 'unknown')
     except Exception as e:
         print(f"Error extracting job_id from {s3_key}: {e}")
         return 'unknown'
@@ -122,7 +122,7 @@ def get_s3_files_all(**context) -> List[str]:
     
     if 'Contents' in response:
         for obj in response['Contents']:
-            if obj['Key'].endswith('.json.gz'):
+            if obj['Key'].endswith('.json'):  # .json 파일로 변경
                 files.append({
                     's3_path': f"s3://{S3_BUCKET}/{obj['Key']}",
                     'last_modified': obj['LastModified'],
@@ -340,6 +340,11 @@ copy_to_redshift = RedshiftDataOperator(
     workgroup_name='hihypipe-redshift-workgroup',
     database='hihypipe',
     sql="""
+    {% set s3_files = ti.xcom_pull(task_ids="get_s3_files_all") %}
+    {% if s3_files and s3_files | select('ne', '') | list %}
+    -- 권한 부여 (필요한 경우)
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {{ params.schema }}.{{ params.table }} TO "IAMR:hihypipe-airflow-irsa";
+    
     -- 실제 COPY 명령 (실제 스키마에 맞춤)
     COPY {{ params.schema }}.{{ params.table }} (
         review_id, sentiment, keywords, year, rating, weekday, review_count,
@@ -348,10 +353,9 @@ copy_to_redshift = RedshiftDataOperator(
         review_date, month, job_id, yyyymmdd, sales_price, is_empty_review, 
         review_text, yyyymm, quarter, category
     )
-    FROM '{{ ti.xcom_pull(task_ids="get_s3_files_all")[0] }}'
+    FROM {{ s3_files | map('quote') | join(", ") }}
     IAM_ROLE 'arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role'
     JSON 'auto'
-    GZIP
     COMPUPDATE OFF
     STATUPDATE OFF
     EMPTYASNULL
@@ -362,6 +366,10 @@ copy_to_redshift = RedshiftDataOperator(
     ACCEPTANYDATE
     MAXERROR 1000
     REGION 'ap-northeast-2';
+    {% else %}
+    -- S3 파일이 없는 경우 메시지 출력
+    SELECT 'No S3 files found for processing' as message;
+    {% endif %}
     """,
     params={
         'schema': 'public',
