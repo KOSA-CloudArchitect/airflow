@@ -197,8 +197,7 @@ def query_redshift_aggregations(**context) -> Dict[str, Any]:
         AVG(rating) as avg_product_rating,
         COUNT(CASE WHEN sentiment = '긍정' THEN 1 END) as positive_reviews,
         COUNT(CASE WHEN sentiment = '부정' THEN 1 END) as negative_reviews,
-        COUNT(CASE WHEN sentiment = '중립' THEN 1 END) as neutral_reviews,
-        COUNT(CASE WHEN sentiment IS NULL OR sentiment = '' THEN 1 END) as unknown_sentiment
+        COUNT(CASE WHEN sentiment = '중립' THEN 1 END) as neutral_reviews
     FROM public.realtime_review_collection 
     WHERE job_id = '{job_id}'
     GROUP BY yyyymm
@@ -214,28 +213,11 @@ def query_redshift_aggregations(**context) -> Dict[str, Any]:
         AVG(rating) as avg_product_rating,
         COUNT(CASE WHEN sentiment = '긍정' THEN 1 END) as positive_reviews,
         COUNT(CASE WHEN sentiment = '부정' THEN 1 END) as negative_reviews,
-        COUNT(CASE WHEN sentiment = '중립' THEN 1 END) as neutral_reviews,
-        COUNT(CASE WHEN sentiment IS NULL OR sentiment = '' THEN 1 END) as unknown_sentiment
+        COUNT(CASE WHEN sentiment = '중립' THEN 1 END) as neutral_reviews
     FROM public.realtime_review_collection 
     WHERE job_id = '{job_id}'
     GROUP BY yyyymmdd
     ORDER BY yyyymmdd;
-    """
-    
-    # 전체 집계 쿼리 (한국어 감정분석 결과에 맞춤)
-    overall_query = f"""
-    SELECT 
-        COUNT(*) as total_reviews,
-        AVG(rating) as avg_rating,
-        AVG(rating) as avg_product_rating,
-        COUNT(CASE WHEN sentiment = '긍정' THEN 1 END) as positive_reviews,
-        COUNT(CASE WHEN sentiment = '부정' THEN 1 END) as negative_reviews,
-        COUNT(CASE WHEN sentiment = '중립' THEN 1 END) as neutral_reviews,
-        COUNT(CASE WHEN sentiment IS NULL OR sentiment = '' THEN 1 END) as unknown_sentiment,
-        MIN(yyyymmdd) as earliest_date,
-        MAX(yyyymmdd) as latest_date
-    FROM public.realtime_review_collection 
-    WHERE job_id = '{job_id}';
     """
     
     try:
@@ -252,19 +234,12 @@ def query_redshift_aggregations(**context) -> Dict[str, Any]:
             sql=daily_query
         )
         
-        overall_result = redshift_hook.execute_query(
-            workgroup_name='hihypipe-redshift-workgroup',
-            database='hihypipe',
-            sql=overall_query
-        )
-        
         # 결과 정리
         aggregation_data = {
             'job_id': job_id,
             'query_timestamp': datetime.now().isoformat(),
             'monthly_stats': monthly_result,
-            'daily_stats': daily_result,
-            'overall_stats': overall_result[0] if overall_result else {}
+            'daily_stats': daily_result
         }
         
         print(f"[Redshift Query] Completed aggregation queries. Monthly: {len(monthly_result)} records, Daily: {len(daily_result)} records")
@@ -365,28 +340,16 @@ copy_to_redshift = RedshiftDataOperator(
     workgroup_name='hihypipe-redshift-workgroup',
     database='hihypipe',
     sql="""
-    -- 디버깅용: 현재 데이터베이스와 테이블 확인
-    SELECT current_database(), current_schema();
-    
-    -- 테이블 존재 여부 확인
-    SELECT COUNT(*) as table_exists 
-    FROM information_schema.tables 
-    WHERE table_schema = '{{ params.schema }}' 
-    AND table_name = '{{ params.table }}';
-    
-    -- S3 파일 경로 확인
-    {% set s3_files = ti.xcom_pull(task_ids="get_s3_files_all") %}
-    {% if s3_files and s3_files[0] %}
-    -- 실제 COPY 명령 (JSON 구조에 정확히 맞춤)
+    -- 실제 COPY 명령 (실제 스키마에 맞춤)
     COPY {{ params.schema }}.{{ params.table }} (
         review_id, sentiment, keywords, year, rating, weekday, review_count,
-        invalid_reason, title, crawled_at, final_price, has_content, product_id,
-        review_help_count, tag, clean_text, day, summary, is_coupang_trial,
-        is_valid_rating, is_valid_date, review_date, month, job_id, yyyymmdd,
-        is_valid, sales_price, is_empty_review, review_text, yyyymm, quarter
+        title, crawled_at, final_price, has_content, product_id,
+        review_help_count, clean_text, day, summary, is_coupang_trial,
+        review_date, month, job_id, yyyymmdd, sales_price, is_empty_review, 
+        review_text, yyyymm, quarter, category
     )
-    FROM '{{ s3_files[0] }}'
-    IAM_ROLE '{{ params.iam_role }}'
+    FROM '{{ ti.xcom_pull(task_ids="get_s3_files_all")[0] }}'
+    IAM_ROLE 'arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role'
     JSON 'auto'
     GZIP
     COMPUPDATE OFF
@@ -399,10 +362,6 @@ copy_to_redshift = RedshiftDataOperator(
     ACCEPTANYDATE
     MAXERROR 1000
     REGION 'ap-northeast-2';
-    {% else %}
-    -- S3 파일이 없는 경우 메시지 출력
-    SELECT 'No S3 files found for processing' as message;
-    {% endif %}
     """,
     params={
         'schema': 'public',
