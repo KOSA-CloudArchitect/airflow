@@ -247,17 +247,6 @@ def save_to_mongodb(**context) -> None:
     mongodb_password = os.getenv('mongodb-password')
     mongodb_database = os.getenv('mongodb-database')
     
-    # Airflow Variable에서도 시도 (fallback)
-    if not mongodb_url:
-        mongodb_url = Variable.get("MONGODB_URL", default_var=None)
-    if not mongodb_db_name:
-        mongodb_db_name = Variable.get("MONGODB_DB_NAME", default_var=None)
-    if not mongodb_username:
-        mongodb_username = Variable.get("mongodb-username", default_var=None)
-    if not mongodb_password:
-        mongodb_password = Variable.get("mongodb-password", default_var=None)
-    if not mongodb_database:
-        mongodb_database = Variable.get("mongodb-database", default_var=None)
     
     # MongoDB 연결 정보 검증
     if not mongodb_url and not (mongodb_username and mongodb_password and mongodb_database):
