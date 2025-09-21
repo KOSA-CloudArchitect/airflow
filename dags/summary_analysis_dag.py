@@ -17,8 +17,10 @@ def kafka_producer_function(**context):
     dag_run = context.get("dag_run")
     job_id = (dag_run.conf or {}).get("job_id") if dag_run else context.get("run_id", "unknown")
     
-    # XCom에서 summary_message 가져오기 시도
+    # XCom에서 summary_message 가져오기 시도 (여러 방법 시도)
     summary_message = None
+    
+    # 방법 1: task_instance를 통한 XCom 접근
     try:
         task_instance = context.get('task_instance')
         if task_instance:
@@ -26,13 +28,39 @@ def kafka_producer_function(**context):
                 task_ids='prepare_summary_message',
                 key='summary_request_message'
             )
-            logging.info(f"[Kafka Producer] Retrieved XCom data: {summary_message}")
+            logging.info(f"[Kafka Producer] Method 1 - Retrieved XCom data: {summary_message}")
     except Exception as e:
-        logging.warning(f"[Kafka Producer] Failed to get XCom data: {e}")
+        logging.warning(f"[Kafka Producer] Method 1 failed: {e}")
+    
+    # 방법 2: context에서 직접 XCom 접근
+    if not summary_message:
+        try:
+            from airflow.models import XCom
+            summary_message = XCom.get_one(
+                run_id=context['dag_run'].run_id,
+                task_id='prepare_summary_message',
+                key='summary_request_message'
+            )
+            logging.info(f"[Kafka Producer] Method 2 - Retrieved XCom data: {summary_message}")
+        except Exception as e:
+            logging.warning(f"[Kafka Producer] Method 2 failed: {e}")
+    
+    # 방법 3: context의 ti를 통한 접근
+    if not summary_message:
+        try:
+            ti = context.get('ti')
+            if ti:
+                summary_message = ti.xcom_pull(
+                    task_ids='prepare_summary_message',
+                    key='summary_request_message'
+                )
+                logging.info(f"[Kafka Producer] Method 3 - Retrieved XCom data: {summary_message}")
+        except Exception as e:
+            logging.warning(f"[Kafka Producer] Method 3 failed: {e}")
     
     # XCom 데이터가 없으면 fallback 메시지 생성
     if not summary_message:
-        logging.warning(f"[Kafka Producer] No XCom data found, creating fallback message")
+        logging.warning(f"[Kafka Producer] No XCom data found with any method, creating fallback message")
         summary_message = {
             "job_id": job_id,
             "timestamp": datetime.now().isoformat(),
