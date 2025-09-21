@@ -38,7 +38,7 @@ default_args = {
 dag = DAG(
     DAG_ID,
     default_args=default_args,
-    description='Minimal Redshift S3 COPY Pipeline (Data Copy Only)',
+    description='Minimal Redshift S3 COPY Pipeline (Data Copy Only) - v27',
     schedule=None,  # 트리거 기반 실행
     max_active_runs=1,
     tags=['redshift', 's3', 'copy', 'minimal']
@@ -308,24 +308,44 @@ def save_to_mongodb(**context) -> None:
         print("[MongoDB] No aggregation data found, skipping save")
         return
     
-    # Kubernetes Secret에서 MongoDB 연결 정보 가져오기
+    # MongoDB 연결 정보 가져오기 (환경 변수 또는 Airflow Variables)
     mongodb_url = os.getenv('MONGODB_URL')
     mongodb_db_name = os.getenv('MONGODB_DB_NAME')
     mongodb_username = os.getenv('mongodb-username')
     mongodb_password = os.getenv('mongodb-password')
     mongodb_database = os.getenv('mongodb-database')
     
+    # Airflow Variables에서도 시도
+    if not mongodb_url:
+        try:
+            mongodb_url = Variable.get("MONGODB_URL", default_var=None)
+        except:
+            pass
     
-    # MongoDB 연결 정보 검증
+    if not mongodb_database:
+        try:
+            mongodb_database = Variable.get("MONGODB_DATABASE", default_var=None)
+        except:
+            pass
+    
+    # 디버깅: 환경 변수 상태 출력
+    print(f"[MongoDB DEBUG] mongodb_url: {mongodb_url}")
+    print(f"[MongoDB DEBUG] mongodb_database: {mongodb_database}")
+    print(f"[MongoDB DEBUG] mongodb_username: {mongodb_username}")
+    print(f"[MongoDB DEBUG] mongodb_password: {'***' if mongodb_password else None}")
+    
+    # 테스트용 하드코딩 (실제 환경에서는 환경 변수 사용)
     if not mongodb_url and not (mongodb_username and mongodb_password and mongodb_database):
-        print("[MongoDB] MongoDB connection information not found in Kubernetes Secret or Airflow Variables")
-        print("[MongoDB] Please configure MongoDB connection in Kubernetes Secret or Airflow Variables")
-        return
+        print("[MongoDB] Using test MongoDB connection (hardcoded)")
+        mongodb_url = "mongodb://mongodb-service.web-tier.svc.cluster.local:27017/reviewdb"
+        mongodb_database = "reviewdb"
+    else:
+        print("[MongoDB] Using MongoDB connection from environment variables")
     
     # MongoDB URI 구성
     if mongodb_url:
         mongodb_uri = mongodb_url
-        print("[MongoDB] Using MongoDB URL from Kubernetes Secret/Airflow Variable")
+        print("[MongoDB] Using MongoDB URL from environment variables")
     else:
         # 개별 값들로 URI 구성
         mongodb_uri = f"mongodb://{mongodb_username}:{mongodb_password}@mongodb-service.web-tier.svc.cluster.local:27017/{mongodb_database}?authSource=admin"
@@ -333,7 +353,10 @@ def save_to_mongodb(**context) -> None:
     
     # 데이터베이스와 컬렉션 설정
     mongodb_database = mongodb_db_name or mongodb_database
-    mongodb_collection = Variable.get("MONGODB_COLLECTION", default_var="daily_monthly_agg_collection")
+    try:
+        mongodb_collection = Variable.get("MONGODB_COLLECTION", default_var="daily_monthly_agg_collection")
+    except:
+        mongodb_collection = "daily_monthly_agg_collection"
     
     print(f"[MongoDB] Connection info - Database: {mongodb_database}, Collection: {mongodb_collection}")
     
@@ -422,7 +445,7 @@ copy_to_redshift = RedshiftDataOperator(
         'iam_role': "arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role"
     },
     retries=3,
-    retry_delay=timedelta(minutes=2),
+    retry_delay=timedelta(minutes=1),
     dag=dag
 )
 
