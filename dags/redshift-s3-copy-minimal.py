@@ -390,7 +390,7 @@ copy_to_redshift = RedshiftDataOperator(
         review_date, month, job_id, yyyymmdd, sales_price, is_empty_review, 
         review_text, yyyymm, quarter, category
     )
-    FROM {{ s3_files | map('string') | map('replace', '^', "'") | map('replace', '$', "'") | join(", ") }}
+    FROM {{ s3_files | map('string') | map('replace', 's3://', "'s3://") | map('replace', '.json.gz', ".json.gz'") | join(', ') }}
     IAM_ROLE 'arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role'
     JSON 'auto'
     GZIP
