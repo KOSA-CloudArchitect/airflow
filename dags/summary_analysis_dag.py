@@ -11,13 +11,11 @@ import json
 import pytz
 import os
 
-def kafka_producer_function(**context):
+def kafka_producer_function(job_id, **context):
     """Kafka Producer 함수 - ProduceToTopicOperator에서 사용"""
-    # DAG 실행 정보에서 job_id 가져오기 (우선순위)
-    dag_run = context.get("dag_run")
-    job_id = (dag_run.conf or {}).get("job_id") if dag_run else context.get("run_id", "unknown")
+    logging.info(f"[Kafka Producer] Received job_id: {job_id}")
     
-    # XCom에서 summary_message 가져오기 시도 (여러 방법 시도)
+    # XCom에서 전체 summary_message 가져오기 시도
     summary_message = None
     
     # 방법 1: task_instance를 통한 XCom 접근
@@ -28,81 +26,41 @@ def kafka_producer_function(**context):
                 task_ids='prepare_summary_message',
                 key='summary_request_message'
             )
-            logging.info(f"[Kafka Producer] Method 1 - Retrieved XCom data: {summary_message}")
+            logging.info(f"[Kafka Producer] Retrieved XCom data: {summary_message}")
     except Exception as e:
-        logging.warning(f"[Kafka Producer] Method 1 failed: {e}")
+        logging.warning(f"[Kafka Producer] XCom access failed: {e}")
     
-    # 방법 2: context에서 직접 XCom 접근
-    if not summary_message:
-        try:
-            from airflow.models import XCom
-            summary_message = XCom.get_one(
-                run_id=context['dag_run'].run_id,
-                task_id='prepare_summary_message',
-                key='summary_request_message'
-            )
-            logging.info(f"[Kafka Producer] Method 2 - Retrieved XCom data: {summary_message}")
-        except Exception as e:
-            logging.warning(f"[Kafka Producer] Method 2 failed: {e}")
-    
-    # 방법 3: context의 ti를 통한 접근
-    if not summary_message:
-        try:
-            ti = context.get('ti')
-            if ti:
-                summary_message = ti.xcom_pull(
-                    task_ids='prepare_summary_message',
-                    key='summary_request_message'
-                )
-                logging.info(f"[Kafka Producer] Method 3 - Retrieved XCom data: {summary_message}")
-        except Exception as e:
-            logging.warning(f"[Kafka Producer] Method 3 failed: {e}")
-    
-    # XCom 데이터가 없으면 fallback 메시지 생성
-    if not summary_message:
-        logging.warning(f"[Kafka Producer] No XCom data found with any method, creating fallback message")
-        summary_message = {
+    # XCom 데이터가 있으면 사용, 없으면 job_id로 간단한 메시지 생성
+    if summary_message:
+        logging.info(f"[Kafka Producer] Using XCom data for job_id: {job_id}")
+        message_data = summary_message
+    else:
+        logging.warning(f"[Kafka Producer] Using fallback message for job_id: {job_id}")
+        message_data = {
             "job_id": job_id,
             "timestamp": datetime.now().isoformat(),
-            "message": f"Fallback message - using job_id from dag_run: {job_id}",
+            "message": f"Publishing summary request for {job_id}",
             "warning": "XCom data not available"
         }
     
-    # JSON 직렬화 전에 데이터 타입 확인 및 정리
+    # JSON 직렬화
     try:
-        # 모든 값을 문자열로 변환하여 JSON 호환성 보장
-        cleaned_message = {}
-        for key, value in summary_message.items():
-            if isinstance(value, dict):
-                cleaned_message[key] = {k: str(v) for k, v in value.items()}
-            else:
-                cleaned_message[key] = str(value)
-        
-        # JSON 직렬화 테스트
-        json_str = json.dumps(cleaned_message, ensure_ascii=False)
+        json_str = json.dumps(message_data, ensure_ascii=False)
         logging.info(f"[Kafka Producer] JSON serialization successful: {json_str}")
-        
     except Exception as e:
         logging.error(f"[Kafka Producer] JSON serialization failed: {e}")
-        logging.error(f"[Kafka Producer] Original message: {summary_message}")
-        # 안전한 fallback 메시지
-        cleaned_message = {
+        # 안전한 fallback
+        fallback_data = {
             "job_id": str(job_id),
             "timestamp": datetime.now().isoformat(),
             "error": f"JSON serialization failed: {str(e)}"
         }
-        json_str = json.dumps(cleaned_message, ensure_ascii=False)
+        json_str = json.dumps(fallback_data, ensure_ascii=False)
     
-    # Kafka 메시지 생성
-    message = {
-        "key": job_id.encode('utf-8'),
-        "value": json_str.encode('utf-8')
-    }
-    
-    logging.info(f"[Kafka Producer] Publishing message for job_id: {job_id}")
-    logging.info(f"[Kafka Producer] Final JSON: {json_str}")
-    
-    return [message]
+    return [{
+        "key": job_id.encode("utf-8"),
+        "value": json_str.encode("utf-8")
+    }]
 
 def prepare_summary_request_message(**context):
     """Overall Summary Request 메시지 준비"""
@@ -199,6 +157,9 @@ with DAG(
         topic="overall-summary-request-topic",
         kafka_config_id="overall-summary-request-topic",
         producer_function=kafka_producer_function,
+        op_kwargs={
+            "job_id": "{{ ti.xcom_pull(task_ids='prepare_summary_message', key='summary_request_message')['job_id'] }}"
+        },
     )
 
     # 3. Control Topic에서 요약 완료 메시지 센싱 대기
