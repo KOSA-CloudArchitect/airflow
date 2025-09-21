@@ -155,7 +155,7 @@ with DAG(
     # 3. Control Topic에서 요약 완료 메시지 센싱 대기
     wait_summary_completion = AwaitMessageSensor(
         task_id="wait_summary_completion",
-        kafka_config_id="job-control-topic",
+        kafka_config_id="job-control-topic-overall",
         topics=["job-control-topic"],
         apply_function="include.kafka_filters.control_message_check",
         apply_function_args=[

@@ -233,7 +233,7 @@ with DAG(
     # 3. Collection 단계 완료 대기
     wait_collection = AwaitMessageSensor(
         task_id="wait_collection",
-        kafka_config_id="job-control-topic",  # Control 토픽 연결 ID
+        kafka_config_id="job-control-topic-collection",  # Control 토픽 연결 ID
         topics=["job-control-topic"],
         apply_function="include.kafka_filters.control_message_check",
         apply_function_args=[
@@ -251,7 +251,7 @@ with DAG(
     # 4. Transform 단계 완료 대기 (병렬 처리)
     wait_transform = AwaitMessageSensor(
         task_id="wait_transform",
-        kafka_config_id="job-control-topic",
+        kafka_config_id="job-control-topic-transform",
         topics=["job-control-topic"],
         apply_function="include.kafka_filters.control_message_check",
         apply_function_args=[
@@ -269,7 +269,7 @@ with DAG(
     # 5. Analysis 단계 완료 대기 (병렬 처리)
     wait_analysis = AwaitMessageSensor(
         task_id="wait_analysis",
-        kafka_config_id="job-control-topic",
+        kafka_config_id="job-control-topic-analysis",
         topics=["job-control-topic"],
         apply_function="include.kafka_filters.control_message_check",
         apply_function_args=[
@@ -287,7 +287,7 @@ with DAG(
     # 6. Aggregation 단계 완료 대기
     wait_aggregation = AwaitMessageSensor(
         task_id="wait_aggregation",
-        kafka_config_id="job-control-topic",
+        kafka_config_id="job-control-topic-aggregation",
         topics=["job-control-topic"],
         apply_function="include.kafka_filters.control_message_check",
         apply_function_args=[
