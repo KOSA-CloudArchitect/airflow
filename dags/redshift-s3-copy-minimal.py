@@ -38,7 +38,7 @@ default_args = {
 dag = DAG(
     DAG_ID,
     default_args=default_args,
-    description='Minimal Redshift S3 COPY Pipeline (Data Copy Only) - v29 (Dynamic Date)',
+    description='Minimal Redshift S3 COPY Pipeline (Data Copy Only) - v30 (Airflow 3.0 호환)',
     schedule=None,  # 트리거 기반 실행
     max_active_runs=1,
     tags=['redshift', 's3', 'copy', 'minimal', 'variables']
@@ -444,7 +444,7 @@ copy_to_redshift = RedshiftDataOperator(
     
     -- 중복 방지: 해당 날짜 데이터 삭제
     DELETE FROM {{ params.schema }}.{{ params.table }} 
-    WHERE yyyymmdd = '{{ execution_date.strftime("%Y%m%d") }}';
+    WHERE yyyymmdd = '{{ data_interval_start.strftime("%Y%m%d") }}';
     
     -- 실제 COPY 명령 (실제 스키마에 맞춤)
     COPY {{ params.schema }}.{{ params.table }} (
@@ -454,7 +454,7 @@ copy_to_redshift = RedshiftDataOperator(
         review_date, month, job_id, yyyymmdd, sales_price, is_empty_review, 
         review_text, yyyymm, quarter, category
     )
-    FROM 's3://hihypipe-raw-data/topics/review-rows/{{ execution_date.strftime("%Y%m%d") }}/'
+    FROM 's3://hihypipe-raw-data/topics/review-rows/{{ data_interval_start.strftime("%Y%m%d") }}/'
     IAM_ROLE 'arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role'
     JSON 'auto'
     GZIP
