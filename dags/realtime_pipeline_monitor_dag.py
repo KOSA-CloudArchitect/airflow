@@ -241,7 +241,7 @@ with DAG(
             "collection"
         ],
         poll_timeout=1,
-        poll_interval=10,  # 30초마다 체크
+        poll_interval=5,  # 30초마다 체크
         execution_timeout=timedelta(minutes=3),
         xcom_push_key="collection_message",
         retries=0,
@@ -259,7 +259,7 @@ with DAG(
             "transform"
         ],
         poll_timeout=1,
-        poll_interval=10,
+        poll_interval=6,
         execution_timeout=timedelta(minutes=3),
         xcom_push_key="transform_message",
         retries=0,
@@ -277,7 +277,7 @@ with DAG(
             "analysis"
         ],
         poll_timeout=1,
-        poll_interval=10,
+        poll_interval=7,
         execution_timeout=timedelta(minutes=5),
         xcom_push_key="analysis_message",
         retries=0,
@@ -295,7 +295,7 @@ with DAG(
             "aggregation"
         ],
         poll_timeout=1,
-        poll_interval=10,
+        poll_interval=8,
         execution_timeout=timedelta(minutes=5),
         xcom_push_key="aggregation_message",
         retries=0,
