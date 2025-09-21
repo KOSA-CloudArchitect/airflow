@@ -127,14 +127,7 @@ with DAG(
     publish_summary_request = ProduceToTopicOperator(
         task_id="publish_summary_request",
         topic="overall-summary-request-topic",
-        producer_config={
-            "bootstrap.servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
-            # SASL/SSL 같은 인증 옵션도 여기에 설정 가능
-            # "security.protocol": "SASL_SSL",
-            # "sasl.mechanisms": "PLAIN",
-            # "sasl.username": "user",
-            # "sasl.password": "pass",
-        },
+        kafka_config_id="overall-summary-request-topic",
         producer_function=kafka_producer_function,
     )
 
