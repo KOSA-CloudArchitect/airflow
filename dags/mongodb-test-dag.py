@@ -22,10 +22,10 @@ default_args = {
 dag = DAG(
     DAG_ID,
     default_args=default_args,
-    description='MongoDB Connection Test Only - v1',
+    description='MongoDB Connection Test Only - v2 (Airflow Variables)',
     schedule=None,  # 트리거 기반 실행
     max_active_runs=1,
-    tags=['mongodb', 'test', 'connection']
+    tags=['mongodb', 'test', 'connection', 'variables']
 )
 
 def test_mongodb_connection(**context) -> None:
@@ -66,25 +66,45 @@ def test_mongodb_connection(**context) -> None:
     print("[MongoDB] Using test hardcoded data for MongoDB connection test")
     print(f"[MongoDB] Test data: {aggregation_data}")
     
-    # MongoDB 연결 정보 가져오기 (환경 변수 또는 Airflow Variables)
-    mongodb_url = os.getenv('MONGODB_URL')
-    mongodb_db_name = os.getenv('MONGODB_DB_NAME')
-    mongodb_username = os.getenv('mongodb-username')
-    mongodb_password = os.getenv('mongodb-password')
-    mongodb_database = os.getenv('mongodb-database')
+    # MongoDB 연결 정보 가져오기 (Airflow Variables 우선 사용)
+    mongodb_url = None
+    mongodb_database = None
+    mongodb_username = None
+    mongodb_password = None
     
-    # Airflow Variables에서도 시도
+    # Airflow Variables에서 MongoDB 연결 정보 가져오기
+    try:
+        mongodb_url = Variable.get("MONGODB_URL", default_var=None)
+        print(f"[MongoDB Variables] MONGODB_URL: {mongodb_url}")
+    except Exception as e:
+        print(f"[MongoDB Variables] MONGODB_URL not found: {e}")
+    
+    try:
+        mongodb_database = Variable.get("MONGODB_DATABASE", default_var=None)
+        print(f"[MongoDB Variables] MONGODB_DATABASE: {mongodb_database}")
+    except Exception as e:
+        print(f"[MongoDB Variables] MONGODB_DATABASE not found: {e}")
+    
+    try:
+        mongodb_username = Variable.get("MONGODB_USERNAME", default_var=None)
+        print(f"[MongoDB Variables] MONGODB_USERNAME: {mongodb_username}")
+    except Exception as e:
+        print(f"[MongoDB Variables] MONGODB_USERNAME not found: {e}")
+    
+    try:
+        mongodb_password = Variable.get("MONGODB_PASSWORD", default_var=None)
+        print(f"[MongoDB Variables] MONGODB_PASSWORD: {'***' if mongodb_password else None}")
+    except Exception as e:
+        print(f"[MongoDB Variables] MONGODB_PASSWORD not found: {e}")
+    
+    # 환경 변수도 시도 (fallback)
     if not mongodb_url:
-        try:
-            mongodb_url = Variable.get("MONGODB_URL", default_var=None)
-        except:
-            pass
+        mongodb_url = os.getenv('MONGODB_URL')
+        print(f"[MongoDB Env] MONGODB_URL from env: {mongodb_url}")
     
     if not mongodb_database:
-        try:
-            mongodb_database = Variable.get("MONGODB_DATABASE", default_var=None)
-        except:
-            pass
+        mongodb_database = os.getenv('MONGODB_DATABASE')
+        print(f"[MongoDB Env] MONGODB_DATABASE from env: {mongodb_database}")
     
     # 디버깅: 환경 변수 상태 출력
     print(f"[MongoDB DEBUG] mongodb_url: {mongodb_url}")
@@ -103,18 +123,24 @@ def test_mongodb_connection(**context) -> None:
     # MongoDB URI 구성
     if mongodb_url:
         mongodb_uri = mongodb_url
-        print("[MongoDB] Using MongoDB URL from environment variables")
-    else:
+        print("[MongoDB] Using MongoDB URL from Airflow Variables")
+    elif mongodb_username and mongodb_password and mongodb_database:
         # 개별 값들로 URI 구성
         mongodb_uri = f"mongodb://{mongodb_username}:{mongodb_password}@mongodb-service.web-tier.svc.cluster.local:27017/{mongodb_database}?authSource=admin"
-        print("[MongoDB] Using constructed MongoDB URI from individual connection parameters")
+        print("[MongoDB] Using constructed MongoDB URI from Airflow Variables")
+    else:
+        # 테스트용 하드코딩 (fallback)
+        mongodb_uri = "mongodb://mongodb-service.web-tier.svc.cluster.local:27017/reviewdb"
+        mongodb_database = "reviewdb"
+        print("[MongoDB] Using test MongoDB connection (hardcoded fallback)")
     
-    # 데이터베이스와 컬렉션 설정
-    mongodb_database = mongodb_db_name or mongodb_database
+    # 컬렉션 설정
     try:
         mongodb_collection = Variable.get("MONGODB_COLLECTION", default_var="daily_monthly_agg_collection")
-    except:
+        print(f"[MongoDB Variables] MONGODB_COLLECTION: {mongodb_collection}")
+    except Exception as e:
         mongodb_collection = "daily_monthly_agg_collection"
+        print(f"[MongoDB Variables] MONGODB_COLLECTION not found, using default: {mongodb_collection}")
     
     print(f"[MongoDB] Connection info - Database: {mongodb_database}, Collection: {mongodb_collection}")
     
