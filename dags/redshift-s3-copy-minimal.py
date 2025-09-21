@@ -82,10 +82,11 @@ def extract_job_id_from_s3_file(s3_key: str) -> str:
     try:
         response = s3_client.get_object(Bucket=S3_BUCKET, Key=s3_key)
         
-        # .json 파일이므로 gzip 압축 해제 불필요
-        content = response['Body'].read().decode('utf-8')
-        data = json.loads(content)
-        return data.get('job_id', 'unknown')
+        # .json.gz 파일이므로 gzip 압축 해제 필요
+        with gzip.GzipFile(fileobj=response['Body']) as gz_file:
+            first_line = gz_file.readline()
+            data = json.loads(first_line)
+            return data.get('job_id', 'unknown')
     except Exception as e:
         print(f"Error extracting job_id from {s3_key}: {e}")
         return 'unknown'
@@ -122,7 +123,7 @@ def get_s3_files_all(**context) -> List[str]:
     
     if 'Contents' in response:
         for obj in response['Contents']:
-            if obj['Key'].endswith('.json'):  # .json 파일로 변경
+            if obj['Key'].endswith('.json.gz'):  # .json.gz 파일로 되돌림
                 files.append({
                     's3_path': f"s3://{S3_BUCKET}/{obj['Key']}",
                     'last_modified': obj['LastModified'],
@@ -356,6 +357,7 @@ copy_to_redshift = RedshiftDataOperator(
     FROM {{ s3_files | map('quote') | join(", ") }}
     IAM_ROLE 'arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role'
     JSON 'auto'
+    GZIP
     COMPUPDATE OFF
     STATUPDATE OFF
     EMPTYASNULL
