@@ -3,7 +3,6 @@ from airflow import DAG
 from airflow.providers.amazon.aws.operators.redshift_data import RedshiftDataOperator
 from airflow.operators.python import PythonOperator
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
-import boto3
 import json
 import gzip
 from zoneinfo import ZoneInfo
@@ -69,7 +68,11 @@ def extract_trigger_data(**context) -> Dict[str, Any]:
 
 def extract_job_id_from_s3_file(s3_key: str) -> str:
     """S3 파일에서 job_id 추출"""
-    s3_client = boto3.client('s3')
+    from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+    
+    # S3 Connection 사용
+    s3_hook = S3Hook(aws_conn_id='s3_conn')
+    s3_client = s3_hook.get_client_type('s3')
     try:
         response = s3_client.get_object(Bucket=S3_BUCKET, Key=s3_key)
         
@@ -83,7 +86,11 @@ def extract_job_id_from_s3_file(s3_key: str) -> str:
 
 def get_s3_files_all(**context) -> List[str]:
     """테스트용: 해당 폴더의 모든 S3 파일 목록을 가져오는 함수 (시간 필터링 제거)"""
-    s3_client = boto3.client('s3')
+    from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+    
+    # S3 Connection 사용
+    s3_hook = S3Hook(aws_conn_id='s3_conn')
+    s3_client = s3_hook.get_client_type('s3')
     
     # 트리거 데이터 가져오기 (날짜만 사용)
     trigger_data = context['task_instance'].xcom_pull(task_ids='extract_trigger_data')
@@ -127,7 +134,20 @@ def get_s3_files_all(**context) -> List[str]:
             check_response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=check_prefix)
             if 'Contents' in check_response:
                 print(f"[S3 Filter] Found {len(check_response['Contents'])} files on {check_date}")
-                break
+                # 첫 번째 파일의 경로를 반환하여 테스트 가능하게 함
+                first_file = check_response['Contents'][0]['Key']
+                print(f"[S3 Filter] First file: {first_file}")
+                return [f"s3://{S3_BUCKET}/{first_file}"]
+        
+        # 최근 7일에도 파일이 없으면 루트 디렉토리 확인
+        print(f"[S3 Filter] No files found in recent 7 days. Checking root directory...")
+        root_response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=S3_PREFIX, MaxKeys=10)
+        if 'Contents' in root_response:
+            print(f"[S3 Filter] Found {len(root_response['Contents'])} files in root directory")
+            for obj in root_response['Contents'][:3]:  # 처음 3개 파일 출력
+                print(f"[S3 Filter] Root file: {obj['Key']}")
+        else:
+            print(f"[S3 Filter] No files found in root directory either")
     
     # 파일 크기순 정렬
     files.sort(key=lambda x: x['size'], reverse=True)
@@ -159,7 +179,7 @@ def query_redshift_aggregations(**context) -> Dict[str, Any]:
     print(f"[Redshift Query] Starting aggregation queries for job_id: {job_id}")
     
     # Redshift 연결
-    redshift_hook = RedshiftDataHook(aws_conn_id='aws_default')
+    redshift_hook = RedshiftDataHook(aws_conn_id='s3_conn')
     
     # 월별 집계 쿼리 (JSON 구조에 맞춤)
     monthly_query = f"""
@@ -382,7 +402,7 @@ copy_to_redshift = RedshiftDataOperator(
         'table': 'realtime_review_collection',
         'iam_role': "arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role"
     },
-    aws_conn_id='aws_default',
+    aws_conn_id='s3_conn',
     retries=3,
     retry_delay=timedelta(minutes=2),
     dag=dag
