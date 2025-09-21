@@ -227,6 +227,7 @@ def query_redshift_aggregations(**context) -> Dict[str, Any]:
 
 def save_to_mongodb(**context) -> None:
     """집계 데이터를 MongoDB에 저장"""
+    import os
     from airflow.models import Variable
     
     # 집계 데이터 가져오기
@@ -239,14 +240,45 @@ def save_to_mongodb(**context) -> None:
         print("[MongoDB] No aggregation data found, skipping save")
         return
     
-    # MongoDB 연결 정보 (Airflow Variable에서 가져오기)
-    mongodb_uri = Variable.get("MONGODB_URI", default_var=None)
-    mongodb_database = Variable.get("MONGODB_DATABASE", default_var="hihypipe_analytics")
-    mongodb_collection = Variable.get("MONGODB_COLLECTION", default_var="review_aggregations")
+    # Kubernetes Secret에서 MongoDB 연결 정보 가져오기
+    mongodb_url = os.getenv('MONGODB_URL')
+    mongodb_db_name = os.getenv('MONGODB_DB_NAME')
+    mongodb_username = os.getenv('mongodb-username')
+    mongodb_password = os.getenv('mongodb-password')
+    mongodb_database = os.getenv('mongodb-database')
     
-    if not mongodb_uri:
-        print("[MongoDB] MONGODB_URI Airflow Variable not set, skipping save")
+    # Airflow Variable에서도 시도 (fallback)
+    if not mongodb_url:
+        mongodb_url = Variable.get("MONGODB_URL", default_var=None)
+    if not mongodb_db_name:
+        mongodb_db_name = Variable.get("MONGODB_DB_NAME", default_var=None)
+    if not mongodb_username:
+        mongodb_username = Variable.get("mongodb-username", default_var=None)
+    if not mongodb_password:
+        mongodb_password = Variable.get("mongodb-password", default_var=None)
+    if not mongodb_database:
+        mongodb_database = Variable.get("mongodb-database", default_var=None)
+    
+    # MongoDB 연결 정보 검증
+    if not mongodb_url and not (mongodb_username and mongodb_password and mongodb_database):
+        print("[MongoDB] MongoDB connection information not found in Kubernetes Secret or Airflow Variables")
+        print("[MongoDB] Please configure MongoDB connection in Kubernetes Secret or Airflow Variables")
         return
+    
+    # MongoDB URI 구성
+    if mongodb_url:
+        mongodb_uri = mongodb_url
+        print("[MongoDB] Using MongoDB URL from Kubernetes Secret/Airflow Variable")
+    else:
+        # 개별 값들로 URI 구성
+        mongodb_uri = f"mongodb://{mongodb_username}:{mongodb_password}@mongodb-service.web-tier.svc.cluster.local:27017/{mongodb_database}?authSource=admin"
+        print("[MongoDB] Using constructed MongoDB URI from individual connection parameters")
+    
+    # 데이터베이스와 컬렉션 설정
+    mongodb_database = mongodb_db_name or mongodb_database
+    mongodb_collection = Variable.get("MONGODB_COLLECTION", default_var="daily_monthly_agg_collection")
+    
+    print(f"[MongoDB] Connection info - Database: {mongodb_database}, Collection: {mongodb_collection}")
     
     try:
         # MongoDB 연결
