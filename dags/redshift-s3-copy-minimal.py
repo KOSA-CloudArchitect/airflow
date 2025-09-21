@@ -109,9 +109,8 @@ def get_s3_files_all(**context) -> List[str]:
     
     print(f"[S3 Filter] TEST MODE: Getting ALL files (no time filtering)")
     
-    # 날짜 추출 (YYYYMMDD 형식, KST 기준) 및 접두사 구성
-    kst = ZoneInfo('Asia/Seoul')
-    execution_date = execution_time.astimezone(kst).strftime('%Y%m%d')
+    # 날짜 추출 (YYYYMMDD 형식, UTC 기준으로 날짜만 추출) 및 접두사 구성
+    execution_date = execution_time.strftime('%Y%m%d')  # UTC 기준으로 날짜만 추출
     prefix = f"{S3_PREFIX}/{execution_date}/"
     
     print(f"[S3 Filter] Searching S3 bucket: {S3_BUCKET}")
@@ -119,43 +118,80 @@ def get_s3_files_all(**context) -> List[str]:
     print(f"[S3 Filter] Source: conf.execution_time -> {execution_time_str}")
     
     files = []
-    response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
     
-    if 'Contents' in response:
-        for obj in response['Contents']:
-            if obj['Key'].endswith('.json.gz'):  # .json.gz 파일로 되돌림
-                files.append({
-                    's3_path': f"s3://{S3_BUCKET}/{obj['Key']}",
-                    'last_modified': obj['LastModified'],
-                    'size': obj['Size']
-                })
-                print(f"[S3 Filter] Added file: {obj['Key']} (size: {obj['Size']}, modified: {obj['LastModified']})")
-    else:
-        print(f"[S3 Filter] No Contents found in S3 response")
-        print(f"[S3 Filter] S3 Response: {response}")
+    try:
+        response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
+        print(f"[S3 Filter] S3 API Response Status: {response.get('ResponseMetadata', {}).get('HTTPStatusCode', 'Unknown')}")
         
-        # 다른 날짜들도 확인해보기 (디버깅용)
-        print(f"[S3 Filter] Checking other dates for debugging...")
-        for days_back in range(1, 8):  # 최근 7일 확인
-            check_date = (execution_time.astimezone(kst) - timedelta(days=days_back)).strftime('%Y%m%d')
-            check_prefix = f"{S3_PREFIX}/{check_date}/"
-            check_response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=check_prefix)
-            if 'Contents' in check_response:
-                print(f"[S3 Filter] Found {len(check_response['Contents'])} files on {check_date}")
-                # 첫 번째 파일의 경로를 반환하여 테스트 가능하게 함
-                first_file = check_response['Contents'][0]['Key']
-                print(f"[S3 Filter] First file: {first_file}")
-                return [f"s3://{S3_BUCKET}/{first_file}"]
-        
-        # 최근 7일에도 파일이 없으면 루트 디렉토리 확인
-        print(f"[S3 Filter] No files found in recent 7 days. Checking root directory...")
-        root_response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=S3_PREFIX, MaxKeys=10)
-        if 'Contents' in root_response:
-            print(f"[S3 Filter] Found {len(root_response['Contents'])} files in root directory")
-            for obj in root_response['Contents'][:3]:  # 처음 3개 파일 출력
-                print(f"[S3 Filter] Root file: {obj['Key']}")
+        if 'Contents' in response:
+            print(f"[S3 Filter] Found {len(response['Contents'])} objects in S3 response")
+            for obj in response['Contents']:
+                print(f"[S3 Filter] Object: {obj['Key']} (size: {obj['Size']}, modified: {obj['LastModified']})")
+                if obj['Key'].endswith('.json.gz'):
+                    files.append({
+                        's3_path': f"s3://{S3_BUCKET}/{obj['Key']}",
+                        'last_modified': obj['LastModified'],
+                        'size': obj['Size']
+                    })
+                    print(f"[S3 Filter] Added file: {obj['Key']} (size: {obj['Size']}, modified: {obj['LastModified']})")
         else:
-            print(f"[S3 Filter] No files found in root directory either")
+            print(f"[S3 Filter] No Contents found in S3 response")
+            print(f"[S3 Filter] S3 Response: {response}")
+            
+            # 더 자세한 디버깅을 위해 다른 패턴들도 확인
+            print(f"[S3 Filter] Checking alternative patterns...")
+            
+            # 1. 날짜 형식 확인 (YYYY-MM-DD vs YYYYMMDD)
+            alt_date_formats = [
+                execution_time.strftime('%Y-%m-%d'),  # 2025-09-21 (UTC 기준)
+                execution_time.strftime('%Y%m%d'),     # 20250921 (UTC 기준)
+            ]
+            
+            for alt_date in alt_date_formats:
+                alt_prefix = f"{S3_PREFIX}/{alt_date}/"
+                print(f"[S3 Filter] Trying alternative prefix: {alt_prefix}")
+                alt_response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=alt_prefix)
+                if 'Contents' in alt_response:
+                    print(f"[S3 Filter] Found {len(alt_response['Contents'])} files with alternative date format: {alt_date}")
+                    for obj in alt_response['Contents'][:3]:
+                        print(f"[S3 Filter] Alt file: {obj['Key']}")
+            
+            # 2. 상위 디렉토리 확인
+            print(f"[S3 Filter] Checking parent directory...")
+            parent_prefix = f"{S3_PREFIX}/"
+            parent_response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=parent_prefix, MaxKeys=20)
+            if 'Contents' in parent_response:
+                print(f"[S3 Filter] Found {len(parent_response['Contents'])} files in parent directory")
+                for obj in parent_response['Contents'][:5]:
+                    print(f"[S3 Filter] Parent file: {obj['Key']}")
+            
+            # 3. 다른 날짜들도 확인해보기 (디버깅용)
+            print(f"[S3 Filter] Checking other dates for debugging...")
+            for days_back in range(1, 8):  # 최근 7일 확인
+                check_date = (execution_time - timedelta(days=days_back)).strftime('%Y%m%d')  # UTC 기준
+                check_prefix = f"{S3_PREFIX}/{check_date}/"
+                check_response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=check_prefix)
+                if 'Contents' in check_response:
+                    print(f"[S3 Filter] Found {len(check_response['Contents'])} files on {check_date}")
+                    # 첫 번째 파일의 경로를 반환하여 테스트 가능하게 함
+                    first_file = check_response['Contents'][0]['Key']
+                    print(f"[S3 Filter] First file: {first_file}")
+                    return [f"s3://{S3_BUCKET}/{first_file}"]
+            
+            # 4. 루트 디렉토리 확인
+            print(f"[S3 Filter] No files found in recent 7 days. Checking root directory...")
+            root_response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=S3_PREFIX, MaxKeys=10)
+            if 'Contents' in root_response:
+                print(f"[S3 Filter] Found {len(root_response['Contents'])} files in root directory")
+                for obj in root_response['Contents'][:3]:  # 처음 3개 파일 출력
+                    print(f"[S3 Filter] Root file: {obj['Key']}")
+            else:
+                print(f"[S3 Filter] No files found in root directory either")
+                
+    except Exception as e:
+        print(f"[S3 Filter] ERROR: Failed to list S3 objects: {e}")
+        print(f"[S3 Filter] Error type: {type(e).__name__}")
+        return [""]
     
     # 파일 크기순 정렬
     files.sort(key=lambda x: x['size'], reverse=True)
