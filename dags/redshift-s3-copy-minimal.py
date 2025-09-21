@@ -38,10 +38,10 @@ default_args = {
 dag = DAG(
     DAG_ID,
     default_args=default_args,
-    description='Minimal Redshift S3 COPY Pipeline (Data Copy Only) - v27',
+    description='MongoDB Connection Test Only - v28',
     schedule=None,  # 트리거 기반 실행
     max_active_runs=1,
-    tags=['redshift', 's3', 'copy', 'minimal']
+    tags=['mongodb', 'test', 'connection']
 )
 
 def extract_trigger_data(**context) -> Dict[str, Any]:
@@ -294,19 +294,41 @@ def query_redshift_aggregations(**context) -> Dict[str, Any]:
         raise
 
 def save_to_mongodb(**context) -> None:
-    """집계 데이터를 MongoDB에 저장"""
+    """집계 데이터를 MongoDB에 저장 (테스트용 하드코딩 데이터)"""
     import os
     from airflow.models import Variable
     
-    # 집계 데이터 가져오기
-    aggregation_data = context['task_instance'].xcom_pull(
-        task_ids='query_redshift_aggregations',
-        key='aggregation_data'
-    )
+    # 테스트용 하드코딩 데이터 생성
+    aggregation_data = {
+        'job_id': 'test-job-001',
+        'query_timestamp': '2025-09-21T19:30:00.000Z',
+        'monthly_stats': [
+            {
+                'year': 2025,
+                'month': 9,
+                'total_reviews': 1500,
+                'avg_rating': 4.2,
+                'positive_count': 1200,
+                'negative_count': 300,
+                'category': '가전디지털'
+            }
+        ],
+        'daily_stats': [
+            {
+                'year': 2025,
+                'month': 9,
+                'day': 21,
+                'total_reviews': 150,
+                'avg_rating': 4.3,
+                'positive_count': 120,
+                'negative_count': 30,
+                'category': '가전디지털'
+            }
+        ]
+    }
     
-    if not aggregation_data:
-        print("[MongoDB] No aggregation data found, skipping save")
-        return
+    print("[MongoDB] Using test hardcoded data for MongoDB connection test")
+    print(f"[MongoDB] Test data: {aggregation_data}")
     
     # MongoDB 연결 정보 가져오기 (환경 변수 또는 Airflow Variables)
     mongodb_url = os.getenv('MONGODB_URL')
@@ -383,85 +405,9 @@ def save_to_mongodb(**context) -> None:
         raise
 
 
-# 1. 트리거 데이터 추출
-extract_trigger_data_task = PythonOperator(
-    task_id='extract_trigger_data',
-    python_callable=extract_trigger_data,
-    dag=dag
-)
-
-# 2. S3 파일 목록 가져오기 (테스트용: 모든 파일)
-get_s3_files = PythonOperator(
-    task_id='get_s3_files_all',
-    python_callable=get_s3_files_all,
-    dag=dag
-)
-
-# 3. S3에서 Redshift로 데이터 복사 (job_id 기준)
-copy_to_redshift = RedshiftDataOperator(
-    task_id='copy_to_redshift',
-    workgroup_name='hihypipe-redshift-workgroup',
-    database='hihypipe',
-    sql="""
-    {% set s3_files = ti.xcom_pull(task_ids="get_s3_files_all") %}
-    {% if s3_files and s3_files | select('ne', '') | list %}
-    -- 권한 부여 (필요한 경우)
-    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {{ params.schema }}.{{ params.table }} TO "IAMR:hihypipe-airflow-irsa";
-    
-    -- 중복 방지: 해당 날짜 데이터 삭제
-    DELETE FROM {{ params.schema }}.{{ params.table }} 
-    WHERE yyyymmdd = '20250921';
-    
-    -- 실제 COPY 명령 (실제 스키마에 맞춤)
-    COPY {{ params.schema }}.{{ params.table }} (
-        review_id, sentiment, keywords, year, rating, weekday, review_count,
-        title, crawled_at, final_price, has_content, product_id,
-        review_help_count, clean_text, day, summary, is_coupang_trial,
-        review_date, month, job_id, yyyymmdd, sales_price, is_empty_review, 
-        review_text, yyyymm, quarter, category
-    )
-    FROM 's3://hihypipe-raw-data/topics/review-rows/20250921/'
-    IAM_ROLE 'arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role'
-    JSON 'auto'
-    GZIP
-    COMPUPDATE OFF
-    STATUPDATE OFF
-    EMPTYASNULL
-    BLANKSASNULL
-    DATEFORMAT 'auto'
-    TIMEFORMAT 'auto'
-    ACCEPTINVCHARS
-    ACCEPTANYDATE
-    MAXERROR 1000
-    REGION 'ap-northeast-2';
-    {% else %}
-    -- S3 파일이 없는 경우 메시지 출력
-    SELECT 'No S3 files found for processing' as message;
-    {% endif %}
-    """,
-    params={
-        'schema': 'public',
-        'table': 'realtime_review_collection',
-        'iam_role': "arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role"
-    },
-    retries=3,
-    retry_delay=timedelta(minutes=1),
-    dag=dag
-)
-
-# 4. Redshift 집계 쿼리 실행
-query_aggregations = PythonOperator(
-    task_id='query_redshift_aggregations',
-    python_callable=query_redshift_aggregations,
-    dag=dag
-)
-
-# 5. MongoDB에 집계 데이터 저장
+# MongoDB 연결 테스트만 실행
 save_aggregations_to_mongodb = PythonOperator(
     task_id='save_aggregations_to_mongodb',
     python_callable=save_to_mongodb,
     dag=dag
 )
-
-# 작업 순서 정의 (COPY 완료 후 집계 및 저장)
-extract_trigger_data_task >> get_s3_files >> copy_to_redshift >> query_aggregations >> save_aggregations_to_mongodb
