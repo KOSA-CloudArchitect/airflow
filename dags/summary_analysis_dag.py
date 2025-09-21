@@ -13,6 +13,10 @@ import os
 
 def kafka_producer_function(**context):
     """Kafka Producer 함수 - ProduceToTopicOperator에서 사용"""
+    # DAG 실행 정보에서 job_id 가져오기 (우선순위)
+    dag_run = context.get("dag_run")
+    job_id = (dag_run.conf or {}).get("job_id") if dag_run else context.get("run_id", "unknown")
+    
     # Airflow 3.0 호환성을 위한 안전한 context 접근
     try:
         # task_instance 접근 시도
@@ -22,24 +26,23 @@ def kafka_producer_function(**context):
                 task_ids='prepare_summary_message',
                 key='summary_request_message'
             )
+            # XCom에서 가져온 job_id가 있으면 사용
+            if summary_message and summary_message.get('job_id') and summary_message.get('job_id') != 'unknown':
+                job_id = summary_message.get('job_id')
         else:
             # task_instance가 없는 경우 fallback
             summary_message = {
-                "job_id": "fallback-job-id",
+                "job_id": job_id,  # dag_run에서 가져온 job_id 사용
                 "timestamp": datetime.now().isoformat(),
-                "message": "Fallback message - task_instance not available"
+                "message": f"Fallback message - using job_id from dag_run: {job_id}"
             }
     except Exception as e:
         logging.warning(f"[Kafka Producer] Failed to get XCom data: {e}")
         summary_message = {
-            "job_id": "error-job-id", 
+            "job_id": job_id,  # dag_run에서 가져온 job_id 사용
             "timestamp": datetime.now().isoformat(),
             "message": f"Error accessing XCom: {str(e)}"
         }
-    
-    # DAG 실행 정보에서 job_id 가져오기
-    dag_run = context.get("dag_run")
-    job_id = (dag_run.conf or {}).get("job_id") if dag_run else context.get("run_id", "unknown")
     
     # Kafka 메시지 생성
     message = {
