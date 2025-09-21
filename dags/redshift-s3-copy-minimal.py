@@ -63,7 +63,8 @@ def extract_trigger_data(**context) -> Dict[str, Any]:
         'source_dag': source_dag
     }
     
-    print(f"[Trigger Data] Extracted: {trigger_data}")
+    print(f"[Trigger Data] Extracted from conf: {trigger_data}")
+    print(f"[Trigger Data] Using execution_time from conf: {execution_time_str}")
     return trigger_data
 
 def extract_job_id_from_s3_file(s3_key: str) -> str:
@@ -98,6 +99,10 @@ def get_s3_files_all(**context) -> List[str]:
     execution_date = execution_time.astimezone(kst).strftime('%Y%m%d')
     prefix = f"{S3_PREFIX}/{execution_date}/"
     
+    print(f"[S3 Filter] Searching S3 bucket: {S3_BUCKET}")
+    print(f"[S3 Filter] Searching prefix: {prefix}")
+    print(f"[S3 Filter] Source: conf.execution_time -> {execution_time_str}")
+    
     files = []
     response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
     
@@ -110,6 +115,19 @@ def get_s3_files_all(**context) -> List[str]:
                     'size': obj['Size']
                 })
                 print(f"[S3 Filter] Added file: {obj['Key']} (size: {obj['Size']}, modified: {obj['LastModified']})")
+    else:
+        print(f"[S3 Filter] No Contents found in S3 response")
+        print(f"[S3 Filter] S3 Response: {response}")
+        
+        # 다른 날짜들도 확인해보기 (디버깅용)
+        print(f"[S3 Filter] Checking other dates for debugging...")
+        for days_back in range(1, 8):  # 최근 7일 확인
+            check_date = (execution_time.astimezone(kst) - timedelta(days=days_back)).strftime('%Y%m%d')
+            check_prefix = f"{S3_PREFIX}/{check_date}/"
+            check_response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=check_prefix)
+            if 'Contents' in check_response:
+                print(f"[S3 Filter] Found {len(check_response['Contents'])} files on {check_date}")
+                break
     
     # 파일 크기순 정렬
     files.sort(key=lambda x: x['size'], reverse=True)
@@ -120,7 +138,15 @@ def get_s3_files_all(**context) -> List[str]:
     for i, file in enumerate(files[:5]):  # 처음 5개 파일 출력
         print(f"[S3 Filter] File {i+1}: {file['s3_path']} (size: {file['size']}, modified: {file['last_modified']})")
     
-    return [file['s3_path'] for file in files]
+    s3_paths = [file['s3_path'] for file in files]
+    
+    if not s3_paths:
+        print(f"[S3 Filter] WARNING: No files found for date {execution_date}")
+        print(f"[S3 Filter] Searched prefix: {prefix}")
+        # 테스트용으로 빈 문자열 반환 (COPY 명령이 실행되지 않도록)
+        return [""]
+    
+    return s3_paths
 
 def query_redshift_aggregations(**context) -> Dict[str, Any]:
     """Redshift에서 job_id 기준으로 월별/일별 집계 데이터 조회"""
@@ -321,6 +347,9 @@ copy_to_redshift = RedshiftDataOperator(
     WHERE table_schema = '{{ params.schema }}' 
     AND table_name = '{{ params.table }}';
     
+    -- S3 파일 경로 확인
+    {% set s3_files = ti.xcom_pull(task_ids="get_s3_files_all") %}
+    {% if s3_files and s3_files[0] %}
     -- 실제 COPY 명령 (JSON 구조에 정확히 맞춤)
     COPY {{ params.schema }}.{{ params.table }} (
         review_id, sentiment, keywords, year, rating, weekday, review_count,
@@ -329,7 +358,7 @@ copy_to_redshift = RedshiftDataOperator(
         is_valid_rating, is_valid_date, review_date, month, job_id, yyyymmdd,
         is_valid, sales_price, is_empty_review, review_text, yyyymm, quarter
     )
-    FROM '{{ ti.xcom_pull(task_ids="get_s3_files_all") | first }}'
+    FROM '{{ s3_files[0] }}'
     IAM_ROLE '{{ params.iam_role }}'
     JSON 'auto'
     GZIP
@@ -343,6 +372,10 @@ copy_to_redshift = RedshiftDataOperator(
     ACCEPTANYDATE
     MAXERROR 1000
     REGION 'ap-northeast-2';
+    {% else %}
+    -- S3 파일이 없는 경우 메시지 출력
+    SELECT 'No S3 files found for processing' as message;
+    {% endif %}
     """,
     params={
         'schema': 'public',
