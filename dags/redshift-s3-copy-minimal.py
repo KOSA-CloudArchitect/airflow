@@ -38,11 +38,25 @@ default_args = {
 dag = DAG(
     DAG_ID,
     default_args=default_args,
-    description='Minimal Redshift S3 COPY Pipeline (Data Copy Only) - v30 (Airflow 3.0 호환)',
+    description='Minimal Redshift S3 COPY Pipeline (Data Copy Only) - v31 (Python Date Processing)',
     schedule=None,  # 트리거 기반 실행
     max_active_runs=1,
     tags=['redshift', 's3', 'copy', 'minimal', 'variables']
 )
+
+def get_execution_date_str(**context):
+    """실행 날짜를 YYYYMMDD 형식으로 변환하여 XCom에 저장"""
+    execution_date = context['data_interval_start']
+    date_str = execution_date.strftime('%Y%m%d')
+    
+    # XCom에 저장
+    context['task_instance'].xcom_push(
+        key='execution_date_str',
+        value=date_str
+    )
+    
+    print(f"[Date Processing] Execution date string: {date_str}")
+    return date_str
 
 def extract_trigger_data(**context) -> Dict[str, Any]:
     """트리거 DAG에서 전달받은 데이터 추출"""
@@ -417,7 +431,14 @@ def save_to_mongodb(**context) -> None:
         raise
 
 
-# 1. 트리거 데이터 추출
+# 1. 실행 날짜 문자열 생성
+get_execution_date = PythonOperator(
+    task_id='get_execution_date_str',
+    python_callable=get_execution_date_str,
+    dag=dag
+)
+
+# 2. 트리거 데이터 추출
 extract_trigger_data_task = PythonOperator(
     task_id='extract_trigger_data',
     python_callable=extract_trigger_data,
@@ -444,7 +465,7 @@ copy_to_redshift = RedshiftDataOperator(
     
     -- 중복 방지: 해당 날짜 데이터 삭제
     DELETE FROM {{ params.schema }}.{{ params.table }} 
-    WHERE yyyymmdd = '{{ data_interval_start.strftime("%Y%m%d") }}';
+    WHERE yyyymmdd = '{{ ti.xcom_pull(task_ids="get_execution_date_str", key="execution_date_str") }}';
     
     -- 실제 COPY 명령 (실제 스키마에 맞춤)
     COPY {{ params.schema }}.{{ params.table }} (
@@ -454,7 +475,7 @@ copy_to_redshift = RedshiftDataOperator(
         review_date, month, job_id, yyyymmdd, sales_price, is_empty_review, 
         review_text, yyyymm, quarter, category
     )
-    FROM 's3://hihypipe-raw-data/topics/review-rows/{{ data_interval_start.strftime("%Y%m%d") }}/'
+    FROM 's3://hihypipe-raw-data/topics/review-rows/{{ ti.xcom_pull(task_ids="get_execution_date_str", key="execution_date_str") }}/'
     IAM_ROLE 'arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role'
     JSON 'auto'
     GZIP
@@ -497,5 +518,5 @@ save_aggregations_to_mongodb = PythonOperator(
     dag=dag
 )
 # 작업 순서 정의 (COPY 완료 후 집계 및 저장)
-extract_trigger_data_task >> get_s3_files >> copy_to_redshift >> query_aggregations >> save_aggregations_to_mongodb
+get_execution_date >> extract_trigger_data_task >> get_s3_files >> copy_to_redshift >> query_aggregations >> save_aggregations_to_mongodb
 

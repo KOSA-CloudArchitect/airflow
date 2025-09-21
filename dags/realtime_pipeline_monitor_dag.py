@@ -152,6 +152,23 @@ def call_crawler_dynamic(**context):
 
 # Control 토픽 메시지 필터링 함수는 include/kafka_filters.py에서 import
 
+def get_kst_execution_time(**context):
+    """KST 시간을 계산하여 XCom에 저장"""
+    import pendulum
+    
+    # data_interval_start를 KST로 변환
+    kst = pendulum.timezone("Asia/Seoul")
+    execution_time_kst = context['data_interval_start'].in_timezone(kst)
+    
+    # XCom에 저장
+    context['task_instance'].xcom_push(
+        key='kst_execution_time',
+        value=execution_time_kst.isoformat()
+    )
+    
+    print(f"[KST Time] Converted execution time to KST: {execution_time_kst.isoformat()}")
+    return execution_time_kst.isoformat()
+
 def handle_step_failure(context):
     """단계별 실패 처리 함수"""
     dag_run = context.get("dag_run")
@@ -215,7 +232,7 @@ default_args = {
 with DAG(
     dag_id="realtime_pipeline_monitor",
     default_args=default_args,
-    description="실시간 파이프라인 모니터링 (Control 토픽 기반) - v3 (Airflow 3.0 호환)",
+    description="실시간 파이프라인 모니터링 (Control 토픽 기반) - v4 (Python Time Processing)",
     schedule=None,
     catchup=False,
     tags=["pipeline", "monitor", "control-topic", "realtime"]
@@ -228,6 +245,13 @@ with DAG(
             print("🚀 Starting crawler request...", flush=True),
             call_crawler_dynamic(**context)
         )[1],  # call_crawler_dynamic의 결과 반환
+    )
+
+    # 2. KST 시간 계산 (템플릿에서 사용할 수 있도록 XCom에 저장)
+    get_kst_time = PythonOperator(
+        task_id="get_kst_execution_time",
+        python_callable=get_kst_execution_time,
+        dag=dag
     )
 
     # 3. Collection 단계 완료 대기
@@ -324,7 +348,7 @@ with DAG(
         trigger_dag_id="summary_analysis_dag",
         conf={
             'job_id': "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}",
-            'execution_time': "{{ (data_interval_start.astimezone(pytz.timezone('Asia/Seoul'))).isoformat() }}",
+            'execution_time': "{{ ti.xcom_pull(task_ids='get_kst_execution_time', key='kst_execution_time') }}",
             'copy_completion_time': "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}",
             'source_dag': 'realtime_pipeline_monitor',
             'trigger_point': 'pipeline_completed',
@@ -336,7 +360,7 @@ with DAG(
     )
 
     # 작업 순서 정의 (병렬 처리 포함)
-    call_crawler >> [wait_collection,wait_transform, wait_analysis, wait_aggregation]
+    call_crawler >> [get_kst_time,wait_collection, wait_transform, wait_analysis, wait_aggregation]
     wait_aggregation >> [trigger_redshift_dag, trigger_summary_dag]
 
 """
