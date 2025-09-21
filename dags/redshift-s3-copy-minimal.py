@@ -3,12 +3,17 @@ from airflow import DAG
 from airflow.providers.amazon.aws.operators.redshift_data import RedshiftDataOperator
 from airflow.operators.python import PythonOperator
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+import boto3
 import json
 import gzip
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Any
 import pandas as pd
 from pymongo import MongoClient
+import urllib3
+
+# SSL 경고 비활성화
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 기본 설정
 DAG_ID = 'redshift_s3_copy_minimal'
@@ -68,11 +73,12 @@ def extract_trigger_data(**context) -> Dict[str, Any]:
 
 def extract_job_id_from_s3_file(s3_key: str) -> str:
     """S3 파일에서 job_id 추출"""
-    from airflow.providers.amazon.aws.hooks.s3 import S3Hook
-    
-    # S3 Connection 사용
-    s3_hook = S3Hook(aws_conn_id='s3_conn')
-    s3_client = s3_hook.get_client_type('s3')
+    # SSL 검증 비활성화로 boto3 클라이언트 생성
+    s3_client = boto3.client(
+        's3',
+        verify=False,  # SSL 검증 비활성화
+        region_name='ap-northeast-2'
+    )
     try:
         response = s3_client.get_object(Bucket=S3_BUCKET, Key=s3_key)
         
@@ -86,11 +92,12 @@ def extract_job_id_from_s3_file(s3_key: str) -> str:
 
 def get_s3_files_all(**context) -> List[str]:
     """테스트용: 해당 폴더의 모든 S3 파일 목록을 가져오는 함수 (시간 필터링 제거)"""
-    from airflow.providers.amazon.aws.hooks.s3 import S3Hook
-    
-    # S3 Connection 사용
-    s3_hook = S3Hook(aws_conn_id='s3_conn')
-    s3_client = s3_hook.get_client_type('s3')
+    # SSL 검증 비활성화로 boto3 클라이언트 생성
+    s3_client = boto3.client(
+        's3',
+        verify=False,  # SSL 검증 비활성화
+        region_name='ap-northeast-2'
+    )
     
     # 트리거 데이터 가져오기 (날짜만 사용)
     trigger_data = context['task_instance'].xcom_pull(task_ids='extract_trigger_data')
@@ -179,7 +186,7 @@ def query_redshift_aggregations(**context) -> Dict[str, Any]:
     print(f"[Redshift Query] Starting aggregation queries for job_id: {job_id}")
     
     # Redshift 연결
-    redshift_hook = RedshiftDataHook(aws_conn_id='s3_conn')
+    redshift_hook = RedshiftDataHook()
     
     # 월별 집계 쿼리 (JSON 구조에 맞춤)
     monthly_query = f"""
@@ -402,7 +409,6 @@ copy_to_redshift = RedshiftDataOperator(
         'table': 'realtime_review_collection',
         'iam_role': "arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role"
     },
-    aws_conn_id='s3_conn',
     retries=3,
     retry_delay=timedelta(minutes=2),
     dag=dag
