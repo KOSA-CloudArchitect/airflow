@@ -17,41 +17,62 @@ def kafka_producer_function(**context):
     dag_run = context.get("dag_run")
     job_id = (dag_run.conf or {}).get("job_id") if dag_run else context.get("run_id", "unknown")
     
-    # Airflow 3.0 호환성을 위한 안전한 context 접근
+    # XCom에서 summary_message 가져오기 시도
+    summary_message = None
     try:
-        # task_instance 접근 시도
         task_instance = context.get('task_instance')
         if task_instance:
             summary_message = task_instance.xcom_pull(
                 task_ids='prepare_summary_message',
                 key='summary_request_message'
             )
-            # XCom에서 가져온 job_id가 있으면 사용
-            if summary_message and summary_message.get('job_id') and summary_message.get('job_id') != 'unknown':
-                job_id = summary_message.get('job_id')
-        else:
-            # task_instance가 없는 경우 fallback
-            summary_message = {
-                "job_id": job_id,  # dag_run에서 가져온 job_id 사용
-                "timestamp": datetime.now().isoformat(),
-                "message": f"Fallback message - using job_id from dag_run: {job_id}"
-            }
+            logging.info(f"[Kafka Producer] Retrieved XCom data: {summary_message}")
     except Exception as e:
         logging.warning(f"[Kafka Producer] Failed to get XCom data: {e}")
+    
+    # XCom 데이터가 없으면 fallback 메시지 생성
+    if not summary_message:
+        logging.warning(f"[Kafka Producer] No XCom data found, creating fallback message")
         summary_message = {
-            "job_id": job_id,  # dag_run에서 가져온 job_id 사용
+            "job_id": job_id,
             "timestamp": datetime.now().isoformat(),
-            "message": f"Error accessing XCom: {str(e)}"
+            "message": f"Fallback message - using job_id from dag_run: {job_id}",
+            "warning": "XCom data not available"
         }
+    
+    # JSON 직렬화 전에 데이터 타입 확인 및 정리
+    try:
+        # 모든 값을 문자열로 변환하여 JSON 호환성 보장
+        cleaned_message = {}
+        for key, value in summary_message.items():
+            if isinstance(value, dict):
+                cleaned_message[key] = {k: str(v) for k, v in value.items()}
+            else:
+                cleaned_message[key] = str(value)
+        
+        # JSON 직렬화 테스트
+        json_str = json.dumps(cleaned_message, ensure_ascii=False)
+        logging.info(f"[Kafka Producer] JSON serialization successful: {json_str}")
+        
+    except Exception as e:
+        logging.error(f"[Kafka Producer] JSON serialization failed: {e}")
+        logging.error(f"[Kafka Producer] Original message: {summary_message}")
+        # 안전한 fallback 메시지
+        cleaned_message = {
+            "job_id": str(job_id),
+            "timestamp": datetime.now().isoformat(),
+            "error": f"JSON serialization failed: {str(e)}"
+        }
+        json_str = json.dumps(cleaned_message, ensure_ascii=False)
     
     # Kafka 메시지 생성
     message = {
         "key": job_id.encode('utf-8'),
-        "value": json.dumps(summary_message).encode('utf-8')
+        "value": json_str.encode('utf-8')
     }
     
     logging.info(f"[Kafka Producer] Publishing message for job_id: {job_id}")
-    logging.info(f"[Kafka Producer] Message: {summary_message}")
+    logging.info(f"[Kafka Producer] Final JSON: {json_str}")
     
     return [message]
 
