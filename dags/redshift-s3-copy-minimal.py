@@ -378,14 +378,13 @@ copy_to_redshift = RedshiftDataOperator(
     database='hihypipe',
     sql="""
     {% set s3_files = ti.xcom_pull(task_ids="get_s3_files_all") %}
-    {% set execution_date = ti.xcom_pull(task_ids="extract_trigger_data").execution_time | replace('Z', '') | replace('T', '') | replace('-', '') | replace(':', '')[:8] %}
     {% if s3_files and s3_files | select('ne', '') | list %}
     -- 권한 부여 (필요한 경우)
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {{ params.schema }}.{{ params.table }} TO "IAMR:hihypipe-airflow-irsa";
     
     -- 중복 방지: 해당 날짜 데이터 삭제
     DELETE FROM {{ params.schema }}.{{ params.table }} 
-    WHERE yyyymmdd = '{{ execution_date }}';
+    WHERE yyyymmdd = '20250921';
     
     -- 실제 COPY 명령 (실제 스키마에 맞춤)
     COPY {{ params.schema }}.{{ params.table }} (
@@ -395,7 +394,7 @@ copy_to_redshift = RedshiftDataOperator(
         review_date, month, job_id, yyyymmdd, sales_price, is_empty_review, 
         review_text, yyyymm, quarter, category
     )
-    FROM 's3://hihypipe-raw-data/topics/review-rows/{{ execution_date }}/'
+    FROM 's3://hihypipe-raw-data/topics/review-rows/20250921/'
     IAM_ROLE 'arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role'
     JSON 'auto'
     GZIP
