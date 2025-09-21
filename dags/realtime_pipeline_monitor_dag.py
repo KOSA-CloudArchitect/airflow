@@ -215,7 +215,7 @@ default_args = {
 with DAG(
     dag_id="realtime_pipeline_monitor",
     default_args=default_args,
-    description="실시간 파이프라인 모니터링 (Control 토픽 기반) - v2",
+    description="실시간 파이프라인 모니터링 (Control 토픽 기반) - v3 (Airflow 3.0 호환)",
     schedule=None,
     catchup=False,
     tags=["pipeline", "monitor", "control-topic", "realtime"]
@@ -324,7 +324,7 @@ with DAG(
         trigger_dag_id="summary_analysis_dag",
         conf={
             'job_id': "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}",
-            'execution_time': "{{ (execution_date.astimezone(pytz.timezone('Asia/Seoul'))).isoformat() }}",
+            'execution_time': "{{ (data_interval_start.astimezone(pytz.timezone('Asia/Seoul'))).isoformat() }}",
             'copy_completion_time': "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}",
             'source_dag': 'realtime_pipeline_monitor',
             'trigger_point': 'pipeline_completed',
