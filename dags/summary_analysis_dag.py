@@ -1,6 +1,7 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.apache.kafka.sensors.kafka import AwaitMessageSensor
+from airflow.providers.apache.kafka.operators.produce import ProduceToTopicOperator
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from airflow.models.xcom_arg import XComArg
 
@@ -9,11 +10,9 @@ import logging
 import json
 import pytz
 import os
-from kafka import KafkaProducer
-from kafka.errors import KafkaError
 
-def publish_summary_request(**context):
-    """Overall Summary Request Topic에 메시지 발행"""
+def prepare_summary_request_message(**context):
+    """Overall Summary Request 메시지 준비"""
     dag_run = context.get("dag_run")
     conf = dag_run.conf or {}
     
@@ -43,62 +42,12 @@ def publish_summary_request(**context):
         }
     }
     
-    logging.info(f"[Summary Request] Publishing message for job_id={job_id}")
+    logging.info(f"[Summary Request] Preparing message for job_id={job_id}")
     logging.info(f"[Summary Request] Execution time from pipeline: {execution_time}")
     logging.info(f"[Summary Request] Copy completion time: {copy_completion_time}")
     logging.info(f"[Summary Request] Message: {summary_request_message}")
     
-    # Kafka Producer를 사용하여 실제 메시지 발행
-    try:
-        # Kafka 설정
-        kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
-        topic_name = "overall-summary-request-topic"
-        
-        if not kafka_servers:
-            raise ValueError("KAFKA_BOOTSTRAP_SERVERS 환경변수가 설정되지 않았습니다.")
-        
-        logging.info(f"[Summary Request] Connecting to Kafka: {kafka_servers}")
-        logging.info(f"[Summary Request] Publishing to topic: {topic_name}")
-        
-        # Kafka Producer 초기화
-        producer = KafkaProducer(
-            bootstrap_servers=kafka_servers,
-            value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-            retries=3,
-            acks='all',
-            request_timeout_ms=30000,
-            delivery_timeout_ms=120000
-        )
-        
-        # 메시지 전송
-        future = producer.send(topic_name, summary_request_message)
-        
-        # 전송 완료 대기
-        record_metadata = future.get(timeout=30)
-        
-        # Producer 정리
-        producer.flush()
-        producer.close()
-        
-        logging.info(f"[Summary Request] ✅ Message published successfully!")
-        logging.info(f"[Summary Request] Topic: {record_metadata.topic}")
-        logging.info(f"[Summary Request] Partition: {record_metadata.partition}")
-        logging.info(f"[Summary Request] Offset: {record_metadata.offset}")
-        
-        print(f"📤 ✅ Successfully published to {topic_name}: {json.dumps(summary_request_message, indent=2)}", flush=True)
-        
-    except KafkaError as e:
-        error_msg = f"Kafka 메시지 발행 실패: {str(e)}"
-        logging.error(f"[Summary Request] ❌ {error_msg}")
-        print(f"📤 ❌ Kafka publishing failed: {error_msg}", flush=True)
-        raise e
-    except Exception as e:
-        error_msg = f"메시지 발행 중 예상치 못한 오류: {str(e)}"
-        logging.error(f"[Summary Request] ❌ {error_msg}")
-        print(f"📤 ❌ Unexpected error: {error_msg}", flush=True)
-        raise e
-    
-    # XCom에 메시지 저장 (디버깅용)
+    # XCom에 메시지 저장
     context['task_instance'].xcom_push(key='summary_request_message', value=summary_request_message)
     
     return summary_request_message
@@ -145,13 +94,33 @@ with DAG(
     tags=["summary", "analysis", "kafka", "llm"]
 ) as dag:
 
-    # 1. Overall Summary Request Topic에 메시지 발행
-    publish_summary_request_task = PythonOperator(
-        task_id="publish_summary_request",
-        python_callable=publish_summary_request,
+    # 1. Overall Summary Request 메시지 준비
+    prepare_summary_message = PythonOperator(
+        task_id="prepare_summary_message",
+        python_callable=prepare_summary_request_message,
     )
 
-    # 2. Control Topic에서 요약 완료 메시지 센싱 대기
+    # 2. Overall Summary Request Topic에 메시지 발행
+    publish_summary_request = ProduceToTopicOperator(
+        task_id="publish_summary_request",
+        topic="overall-summary-request-topic",
+        producer_config={
+            "bootstrap.servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
+            # SASL/SSL 같은 인증 옵션도 여기에 설정 가능
+            # "security.protocol": "SASL_SSL",
+            # "sasl.mechanisms": "PLAIN",
+            # "sasl.username": "user",
+            # "sasl.password": "pass",
+        },
+        messages=[
+            {
+                "key": "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}".encode('utf-8'),
+                "value": "{{ ti.xcom_pull(task_ids='prepare_summary_message', key='summary_request_message') | tojson }}".encode('utf-8')
+            }
+        ],
+    )
+
+    # 3. Control Topic에서 요약 완료 메시지 센싱 대기
     wait_summary_completion = AwaitMessageSensor(
         task_id="wait_summary_completion",
         kafka_config_id="job-control-topic",
@@ -169,14 +138,14 @@ with DAG(
         on_failure_callback=handle_summary_failure
     )
 
-    # 3. 완료 알림
+    # 4. 완료 알림
     notify_completion = PythonOperator(
         task_id="notify_summary_completion",
         python_callable=notify_summary_completion,
     )
 
     # 작업 순서 정의
-    publish_summary_request_task >> wait_summary_completion >> notify_completion
+    prepare_summary_message >> publish_summary_request >> wait_summary_completion >> notify_completion
 
 """
 DAG 실행 방법:
@@ -213,10 +182,9 @@ DAG 실행 방법:
 - Overall Summary Request Topic: job_id, execution_time, copy_completion_time 포함
 - Control Topic: summary 단계 완료 메시지 센싱
 
-Kafka Producer 설정:
+Airflow 3.0 Kafka Producer 설정:
 - 토픽: overall-summary-request-topic
 - 직렬화: JSON (UTF-8 인코딩)
-- 재시도: 3회
-- ACK: all (모든 복제본 확인)
-- 타임아웃: 30초 (요청), 120초 (전송)
+- Producer Operator 사용으로 안정성 향상
+- 환경변수 기반 Kafka 서버 설정
 """
