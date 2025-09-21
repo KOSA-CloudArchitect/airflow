@@ -318,10 +318,27 @@ with DAG(
         dag=dag
     )
 
+    # 8. Summary Analysis DAG 트리거 (병렬 실행)
+    trigger_summary_dag = TriggerDagRunOperator(
+        task_id="trigger_summary_dag",
+        trigger_dag_id="summary_analysis_dag",
+        conf={
+            'job_id': "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}",
+            'execution_time': "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}",
+            'copy_completion_time': "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}",
+            'source_dag': 'realtime_pipeline_monitor',
+            'trigger_point': 'pipeline_completed',
+            'redshift_copy_completed': False  # 아직 Redshift COPY는 완료되지 않음
+        },
+        wait_for_completion=False,  # 비동기 실행
+        poke_interval=30,
+        dag=dag
+    )
+
     # 작업 순서 정의 (병렬 처리 포함)
     call_crawler >> wait_collection
     wait_collection >> [wait_transform, wait_analysis, wait_aggregation]
-    [wait_transform, wait_analysis, wait_aggregation] >> trigger_redshift_dag
+    [wait_transform, wait_analysis, wait_aggregation] >> [trigger_redshift_dag, trigger_summary_dag]
 
 """
 DAG 실행 방법:

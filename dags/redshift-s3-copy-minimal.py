@@ -2,11 +2,14 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.providers.amazon.aws.operators.redshift_data import RedshiftDataOperator
 from airflow.operators.python import PythonOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 import boto3
 import json
 import gzip
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Any
+import pandas as pd
+from pymongo import MongoClient
 
 # 기본 설정
 DAG_ID = 'redshift_s3_copy_minimal'
@@ -119,6 +122,155 @@ def get_s3_files_all(**context) -> List[str]:
     
     return [file['s3_path'] for file in files]
 
+def query_redshift_aggregations(**context) -> Dict[str, Any]:
+    """Redshift에서 job_id 기준으로 월별/일별 집계 데이터 조회"""
+    from airflow.providers.amazon.aws.hooks.redshift_data import RedshiftDataHook
+    
+    # 트리거 데이터에서 job_id 가져오기
+    trigger_data = context['task_instance'].xcom_pull(task_ids='extract_trigger_data')
+    job_id = trigger_data['job_id']
+    
+    print(f"[Redshift Query] Starting aggregation queries for job_id: {job_id}")
+    
+    # Redshift 연결
+    redshift_hook = RedshiftDataHook(aws_conn_id='aws_default')
+    
+    # 월별 집계 쿼리 (JSON 구조에 맞춤)
+    monthly_query = f"""
+    SELECT 
+        yyyymm,
+        COUNT(*) as total_reviews,
+        AVG(rating) as avg_rating,
+        AVG(rating) as avg_product_rating,
+        COUNT(CASE WHEN sentiment = '긍정' THEN 1 END) as positive_reviews,
+        COUNT(CASE WHEN sentiment = '부정' THEN 1 END) as negative_reviews,
+        COUNT(CASE WHEN sentiment = '중립' THEN 1 END) as neutral_reviews,
+        COUNT(CASE WHEN sentiment IS NULL OR sentiment = '' THEN 1 END) as unknown_sentiment
+    FROM public.realtime_review_collection 
+    WHERE job_id = '{job_id}'
+    GROUP BY yyyymm
+    ORDER BY yyyymm;
+    """
+    
+    # 일별 집계 쿼리 (JSON 구조에 맞춤)
+    daily_query = f"""
+    SELECT 
+        yyyymmdd,
+        COUNT(*) as total_reviews,
+        AVG(rating) as avg_rating,
+        AVG(rating) as avg_product_rating,
+        COUNT(CASE WHEN sentiment = '긍정' THEN 1 END) as positive_reviews,
+        COUNT(CASE WHEN sentiment = '부정' THEN 1 END) as negative_reviews,
+        COUNT(CASE WHEN sentiment = '중립' THEN 1 END) as neutral_reviews,
+        COUNT(CASE WHEN sentiment IS NULL OR sentiment = '' THEN 1 END) as unknown_sentiment
+    FROM public.realtime_review_collection 
+    WHERE job_id = '{job_id}'
+    GROUP BY yyyymmdd
+    ORDER BY yyyymmdd;
+    """
+    
+    # 전체 집계 쿼리 (한국어 감정분석 결과에 맞춤)
+    overall_query = f"""
+    SELECT 
+        COUNT(*) as total_reviews,
+        AVG(rating) as avg_rating,
+        AVG(rating) as avg_product_rating,
+        COUNT(CASE WHEN sentiment = '긍정' THEN 1 END) as positive_reviews,
+        COUNT(CASE WHEN sentiment = '부정' THEN 1 END) as negative_reviews,
+        COUNT(CASE WHEN sentiment = '중립' THEN 1 END) as neutral_reviews,
+        COUNT(CASE WHEN sentiment IS NULL OR sentiment = '' THEN 1 END) as unknown_sentiment,
+        MIN(yyyymmdd) as earliest_date,
+        MAX(yyyymmdd) as latest_date
+    FROM public.realtime_review_collection 
+    WHERE job_id = '{job_id}';
+    """
+    
+    try:
+        # 쿼리 실행
+        monthly_result = redshift_hook.execute_query(
+            workgroup_name='hihypipe-redshift-workgroup',
+            database='hihypipe',
+            sql=monthly_query
+        )
+        
+        daily_result = redshift_hook.execute_query(
+            workgroup_name='hihypipe-redshift-workgroup',
+            database='hihypipe',
+            sql=daily_query
+        )
+        
+        overall_result = redshift_hook.execute_query(
+            workgroup_name='hihypipe-redshift-workgroup',
+            database='hihypipe',
+            sql=overall_query
+        )
+        
+        # 결과 정리
+        aggregation_data = {
+            'job_id': job_id,
+            'query_timestamp': datetime.now().isoformat(),
+            'monthly_stats': monthly_result,
+            'daily_stats': daily_result,
+            'overall_stats': overall_result[0] if overall_result else {}
+        }
+        
+        print(f"[Redshift Query] Completed aggregation queries. Monthly: {len(monthly_result)} records, Daily: {len(daily_result)} records")
+        
+        # XCom에 저장
+        context['task_instance'].xcom_push(key='aggregation_data', value=aggregation_data)
+        
+        return aggregation_data
+        
+    except Exception as e:
+        print(f"[Redshift Query] Error executing queries: {e}")
+        raise
+
+def save_to_mongodb(**context) -> None:
+    """집계 데이터를 MongoDB에 저장"""
+    from airflow.models import Variable
+    
+    # 집계 데이터 가져오기
+    aggregation_data = context['task_instance'].xcom_pull(
+        task_ids='query_redshift_aggregations',
+        key='aggregation_data'
+    )
+    
+    if not aggregation_data:
+        print("[MongoDB] No aggregation data found, skipping save")
+        return
+    
+    # MongoDB 연결 정보 (Airflow Variable에서 가져오기)
+    mongodb_uri = Variable.get("MONGODB_URI", default_var=None)
+    mongodb_database = Variable.get("MONGODB_DATABASE", default_var="hihypipe_analytics")
+    mongodb_collection = Variable.get("MONGODB_COLLECTION", default_var="review_aggregations")
+    
+    if not mongodb_uri:
+        print("[MongoDB] MONGODB_URI Airflow Variable not set, skipping save")
+        return
+    
+    try:
+        # MongoDB 연결
+        client = MongoClient(mongodb_uri)
+        db = client[mongodb_database]
+        collection = db[mongodb_collection]
+        
+        # 데이터 저장 (upsert 방식으로 job_id 기준)
+        result = collection.replace_one(
+            {'job_id': aggregation_data['job_id']},
+            aggregation_data,
+            upsert=True
+        )
+        
+        print(f"[MongoDB] Data saved successfully. Job ID: {aggregation_data['job_id']}, Operation: {result.upserted_id or 'updated'}")
+        
+        # 연결 종료
+        client.close()
+        
+    except Exception as e:
+        print(f"[MongoDB] Error saving data: {e}")
+        raise
+
+
 # 1. 트리거 데이터 추출
 extract_trigger_data_task = PythonOperator(
     task_id='extract_trigger_data',
@@ -148,12 +300,13 @@ copy_to_redshift = RedshiftDataOperator(
     WHERE table_schema = '{{ params.schema }}' 
     AND table_name = '{{ params.table }}';
     
-    -- 실제 COPY 명령 (일별/월별 집계용 최소 컬럼)
+    -- 실제 COPY 명령 (JSON 구조에 정확히 맞춤)
     COPY {{ params.schema }}.{{ params.table }} (
-        review_date, product_id, job_id, product_title, product_category, 
-        product_rating, review_count, sales_price, final_price, review_rating,
-        review_text, clean_text, review_summary, sentiment_score,
-        year, month, day, quarter, yyyymm, yyyymmdd, weekday, crawled_at
+        review_id, sentiment, keywords, year, rating, weekday, review_count,
+        invalid_reason, title, crawled_at, final_price, has_content, product_id,
+        review_help_count, tag, clean_text, day, summary, is_coupang_trial,
+        is_valid_rating, is_valid_date, review_date, month, job_id, yyyymmdd,
+        is_valid, sales_price, is_empty_review, review_text, yyyymm, quarter
     )
     FROM '{{ ti.xcom_pull(task_ids="get_s3_files_all") | first }}'
     IAM_ROLE '{{ params.iam_role }}'
@@ -172,7 +325,7 @@ copy_to_redshift = RedshiftDataOperator(
     """,
     params={
         'schema': 'public',
-        'table': 'daily_review_summary',
+        'table': 'realtime_review_collection',
         'iam_role': "arn:aws:iam::914215749228:role/hihypipe-redshift-s3-copy-role"
     },
     aws_conn_id='aws_default',
@@ -181,5 +334,19 @@ copy_to_redshift = RedshiftDataOperator(
     dag=dag
 )
 
-# 작업 순서 정의 (최소화된 파이프라인)
-extract_trigger_data_task >> get_s3_files >> copy_to_redshift
+# 4. Redshift 집계 쿼리 실행
+query_aggregations = PythonOperator(
+    task_id='query_redshift_aggregations',
+    python_callable=query_redshift_aggregations,
+    dag=dag
+)
+
+# 5. MongoDB에 집계 데이터 저장
+save_aggregations_to_mongodb = PythonOperator(
+    task_id='save_aggregations_to_mongodb',
+    python_callable=save_to_mongodb,
+    dag=dag
+)
+
+# 작업 순서 정의 (COPY 완료 후 집계 및 저장)
+extract_trigger_data_task >> get_s3_files >> copy_to_redshift >> query_aggregations >> save_aggregations_to_mongodb

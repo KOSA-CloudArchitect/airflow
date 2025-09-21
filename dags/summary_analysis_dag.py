@@ -8,6 +8,9 @@ from datetime import datetime, timedelta
 import logging
 import json
 import pytz
+import os
+from kafka import KafkaProducer
+from kafka.errors import KafkaError
 
 def publish_summary_request(**context):
     """Overall Summary Request Topic에 메시지 발행"""
@@ -45,9 +48,55 @@ def publish_summary_request(**context):
     logging.info(f"[Summary Request] Copy completion time: {copy_completion_time}")
     logging.info(f"[Summary Request] Message: {summary_request_message}")
     
-    # 실제 구현에서는 Kafka Producer를 사용하여 메시지 발행
-    # 여기서는 로깅으로 대체
-    print(f"📤 Publishing to overall-summary-request-topic: {json.dumps(summary_request_message, indent=2)}", flush=True)
+    # Kafka Producer를 사용하여 실제 메시지 발행
+    try:
+        # Kafka 설정
+        kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
+        topic_name = "overall-summary-request-topic"
+        
+        if not kafka_servers:
+            raise ValueError("KAFKA_BOOTSTRAP_SERVERS 환경변수가 설정되지 않았습니다.")
+        
+        logging.info(f"[Summary Request] Connecting to Kafka: {kafka_servers}")
+        logging.info(f"[Summary Request] Publishing to topic: {topic_name}")
+        
+        # Kafka Producer 초기화
+        producer = KafkaProducer(
+            bootstrap_servers=kafka_servers,
+            value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+            retries=3,
+            acks='all',
+            request_timeout_ms=30000,
+            delivery_timeout_ms=120000
+        )
+        
+        # 메시지 전송
+        future = producer.send(topic_name, summary_request_message)
+        
+        # 전송 완료 대기
+        record_metadata = future.get(timeout=30)
+        
+        # Producer 정리
+        producer.flush()
+        producer.close()
+        
+        logging.info(f"[Summary Request] ✅ Message published successfully!")
+        logging.info(f"[Summary Request] Topic: {record_metadata.topic}")
+        logging.info(f"[Summary Request] Partition: {record_metadata.partition}")
+        logging.info(f"[Summary Request] Offset: {record_metadata.offset}")
+        
+        print(f"📤 ✅ Successfully published to {topic_name}: {json.dumps(summary_request_message, indent=2)}", flush=True)
+        
+    except KafkaError as e:
+        error_msg = f"Kafka 메시지 발행 실패: {str(e)}"
+        logging.error(f"[Summary Request] ❌ {error_msg}")
+        print(f"📤 ❌ Kafka publishing failed: {error_msg}", flush=True)
+        raise e
+    except Exception as e:
+        error_msg = f"메시지 발행 중 예상치 못한 오류: {str(e)}"
+        logging.error(f"[Summary Request] ❌ {error_msg}")
+        print(f"📤 ❌ Unexpected error: {error_msg}", flush=True)
+        raise e
     
     # XCom에 메시지 저장 (디버깅용)
     context['task_instance'].xcom_push(key='summary_request_message', value=summary_request_message)
@@ -158,8 +207,16 @@ DAG 실행 방법:
 - 타임아웃: 30분 (LLM 분석 시간 고려)
 - 실패 시 자동으로 에러 로깅 및 알림 처리
 - Kafka 연결 ID는 'job-control-topic'으로 설정 필요
+- KAFKA_BOOTSTRAP_SERVERS 환경변수 설정 필요
 
 메시지 구조:
 - Overall Summary Request Topic: job_id, execution_time, copy_completion_time 포함
 - Control Topic: summary 단계 완료 메시지 센싱
+
+Kafka Producer 설정:
+- 토픽: overall-summary-request-topic
+- 직렬화: JSON (UTF-8 인코딩)
+- 재시도: 3회
+- ACK: all (모든 복제본 확인)
+- 타임아웃: 30초 (요청), 120초 (전송)
 """
