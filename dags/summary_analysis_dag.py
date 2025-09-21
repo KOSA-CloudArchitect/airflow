@@ -28,10 +28,11 @@ def build_kafka_message(**context):
             logging.info(f"[Kafka Message Builder] Built message for job_id: {job_id}")
             logging.info(f"[Kafka Message Builder] Message: {json_str}")
             
-            return [{
-                "key": job_id.encode("utf-8"),
-                "value": json_str.encode("utf-8")
-            }]
+            # XCom에 저장할 때는 문자열로 반환 (bytes 아님)
+            return {
+                "key": job_id,
+                "value": json_str
+            }
         else:
             logging.warning(f"[Kafka Message Builder] No summary_message found in XCom")
             # Fallback message
@@ -42,10 +43,10 @@ def build_kafka_message(**context):
             }
             json_str = json.dumps(fallback_message, ensure_ascii=False)
             
-            return [{
-                "key": "unknown".encode("utf-8"),
-                "value": json_str.encode("utf-8")
-            }]
+            return {
+                "key": "unknown",
+                "value": json_str
+            }
             
     except Exception as e:
         logging.error(f"[Kafka Message Builder] Error building message: {e}")
@@ -60,10 +61,10 @@ def build_kafka_message(**context):
         }
         json_str = json.dumps(error_message, ensure_ascii=False)
         
-        return [{
-            "key": "error".encode("utf-8"),
-            "value": json_str.encode("utf-8")
-        }]
+        return {
+            "key": "error",
+            "value": json_str
+        }
 
 def prepare_summary_request_message(**context):
     """Overall Summary Request 메시지 준비"""
@@ -165,9 +166,10 @@ with DAG(
         task_id="publish_summary_request",
         topic="overall-summary-request-topic",
         kafka_config_id="overall-summary-request-topic",
-        producer_function=lambda **context: context["ti"].xcom_pull(
-            task_ids="prepare_kafka_message"
-        ),
+        producer_function=lambda **context: [{
+            "key": context["ti"].xcom_pull(task_ids="prepare_kafka_message")["key"].encode("utf-8"),
+            "value": context["ti"].xcom_pull(task_ids="prepare_kafka_message")["value"].encode("utf-8")
+        }],
     )
 
     # 3. Control Topic에서 요약 완료 메시지 센싱 대기
