@@ -66,6 +66,53 @@ def build_kafka_message(**context):
             "value": json_str
         }
 
+def kafka_producer_function(**context):
+    """Kafka Producer 함수 - ProduceToTopicOperator에서 사용"""
+    try:
+        # XCom에서 메시지 데이터 가져오기
+        message_data = context["ti"].xcom_pull(task_ids="prepare_kafka_message")
+        
+        if message_data:
+            logging.info(f"[Kafka Producer] Retrieved message data: {message_data}")
+            
+            # bytes로 변환하여 반환
+            return [{
+                "key": message_data["key"].encode("utf-8"),
+                "value": message_data["value"].encode("utf-8")
+            }]
+        else:
+            logging.warning(f"[Kafka Producer] No message data found in XCom")
+            # Fallback message
+            fallback_data = {
+                "job_id": "unknown",
+                "timestamp": datetime.now().isoformat(),
+                "error": "No message data available"
+            }
+            json_str = json.dumps(fallback_data, ensure_ascii=False)
+            
+            return [{
+                "key": "unknown".encode("utf-8"),
+                "value": json_str.encode("utf-8")
+            }]
+            
+    except Exception as e:
+        logging.error(f"[Kafka Producer] Error in producer function: {e}")
+        import traceback
+        logging.error(f"[Kafka Producer] Traceback: {traceback.format_exc()}")
+        
+        # Error fallback message
+        error_message = {
+            "job_id": "error",
+            "timestamp": datetime.now().isoformat(),
+            "error": f"Producer function failed: {str(e)}"
+        }
+        json_str = json.dumps(error_message, ensure_ascii=False)
+        
+        return [{
+            "key": "error".encode("utf-8"),
+            "value": json_str.encode("utf-8")
+        }]
+
 def prepare_summary_request_message(**context):
     """Overall Summary Request 메시지 준비"""
     dag_run = context.get("dag_run")
@@ -166,10 +213,7 @@ with DAG(
         task_id="publish_summary_request",
         topic="overall-summary-request-topic",
         kafka_config_id="overall-summary-request-topic",
-        producer_function=lambda **context: [{
-            "key": context["ti"].xcom_pull(task_ids="prepare_kafka_message")["key"].encode("utf-8"),
-            "value": context["ti"].xcom_pull(task_ids="prepare_kafka_message")["value"].encode("utf-8")
-        }],
+        producer_function=kafka_producer_function,
     )
 
     # 3. Control Topic에서 요약 완료 메시지 센싱 대기
