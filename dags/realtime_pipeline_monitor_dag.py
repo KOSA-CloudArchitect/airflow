@@ -287,6 +287,9 @@ with DAG(
             "{{ dag_run.conf['job_id'] }}",
             "collection"
         ],
+        apply_function_kwargs={
+            "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='get_kst_execution_time', key='kst_execution_time') }}"
+        },
         poll_timeout=1,
         poll_interval=3,  # 3초마다 체크
         execution_timeout=timedelta(minutes=3),
@@ -305,6 +308,9 @@ with DAG(
             "{{ dag_run.conf['job_id'] }}",
             "transform"
         ],
+        apply_function_kwargs={
+            "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='get_kst_execution_time', key='kst_execution_time') }}"
+        },
         poll_timeout=1,
         poll_interval=3,
         execution_timeout=timedelta(minutes=3),
@@ -323,6 +329,9 @@ with DAG(
             "{{ dag_run.conf['job_id'] }}",
             "analysis"
         ],
+        apply_function_kwargs={
+            "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='get_kst_execution_time', key='kst_execution_time') }}"
+        },
         poll_timeout=1,
         poll_interval=3,
         execution_timeout=timedelta(minutes=5),
@@ -341,6 +350,9 @@ with DAG(
             "{{ dag_run.conf['job_id'] }}",
             "aggregation"
         ],
+        apply_function_kwargs={
+            "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='get_kst_execution_time', key='kst_execution_time') }}"
+        },
         poll_timeout=1,
         poll_interval=3,
         execution_timeout=timedelta(minutes=5),

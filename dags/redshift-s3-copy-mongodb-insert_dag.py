@@ -245,7 +245,6 @@ def query_redshift_aggregations(**context) -> Dict[str, Any]:
         yyyymm,
         COUNT(*) as total_reviews,
         AVG(rating) as avg_rating,
-        AVG(rating) as avg_product_rating,
         COUNT(CASE WHEN sentiment = '긍정' THEN 1 END) as positive_reviews,
         COUNT(CASE WHEN sentiment = '부정' THEN 1 END) as negative_reviews,
         COUNT(CASE WHEN sentiment = '중립' THEN 1 END) as neutral_reviews
@@ -261,7 +260,6 @@ def query_redshift_aggregations(**context) -> Dict[str, Any]:
         yyyymmdd,
         COUNT(*) as total_reviews,
         AVG(rating) as avg_rating,
-        AVG(rating) as avg_product_rating,
         COUNT(CASE WHEN sentiment = '긍정' THEN 1 END) as positive_reviews,
         COUNT(CASE WHEN sentiment = '부정' THEN 1 END) as negative_reviews,
         COUNT(CASE WHEN sentiment = '중립' THEN 1 END) as neutral_reviews
