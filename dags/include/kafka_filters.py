@@ -83,14 +83,14 @@ def control_message_check(expected_job_id, expected_step, message, min_timestamp
     # 타임스탬프 필터링 - 24시간 이내 메시지는 허용
     # (메시지 발송 시간과 센서 시작 시간의 차이로 인한 문제 해결)
     if is_match and min_ts and event_ts and event_ts < min_ts:
-        # 24시간 이내 메시지는 허용 (UTC 기준 now 사용)
+        # 5분(grace) 이내 메시지는 허용 (UTC 기준 now 사용)
         now_utc = datetime.now(timezone.utc)
         print(f"[control_sensor][DEBUG] event_ts={event_ts}, min_ts={min_ts}, now_utc={now_utc}", flush=True)
-        time_diff_hours = (now_utc - event_ts).total_seconds() / 3600
-        if time_diff_hours <= 24:
-            print(f"[control_sensor] allow recent event: event_ts={event_ts.isoformat()} < min_ts={min_ts.isoformat()} (within 24h: {time_diff_hours:.1f}h)", flush=True)
+        diff_minutes = (now_utc - event_ts).total_seconds() / 60
+        if diff_minutes <= 5:
+            print(f"[control_sensor] allow recent event: event_ts={event_ts.isoformat()} < min_ts={min_ts.isoformat()} (within 5m: {diff_minutes:.1f}m)", flush=True)
         else:
-            print(f"[control_sensor] skip old event: event_ts={event_ts.isoformat()} < min_ts={min_ts.isoformat()} (too old: {time_diff_hours:.1f}h)", flush=True)
+            print(f"[control_sensor] skip old event: event_ts={event_ts.isoformat()} < min_ts={min_ts.isoformat()} (too old: {diff_minutes:.1f}m)", flush=True)
             return None
     
     print(f"[control_sensor] check: expected_job_id={expected_job_id}, expected_step={expected_step}")
