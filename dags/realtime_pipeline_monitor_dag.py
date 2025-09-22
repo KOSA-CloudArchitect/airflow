@@ -360,7 +360,8 @@ with DAG(
     )
 
     # 작업 순서 정의 (병렬 처리 포함)
-    call_crawler >> [get_kst_time,wait_collection, wait_transform, wait_analysis, wait_aggregation]
+    call_crawler >> [get_kst_time,wait_collection]
+    wait_collection >> [wait_transform, wait_analysis, wait_aggregation]
     wait_aggregation >> [trigger_redshift_dag, trigger_summary_dag]
 
 """
