@@ -308,41 +308,28 @@ def query_redshift_aggregations(**context) -> Dict[str, Any]:
         raise
 
 def save_to_mongodb(**context) -> None:
-    """집계 데이터를 MongoDB에 저장 (테스트용 하드코딩 데이터)"""
+    """집계 데이터를 MongoDB에 저장 (XCom에서 집계 결과 수신)"""
     import os
     from airflow.models import Variable
     
-    # 테스트용 하드코딩 데이터 생성
-    aggregation_data = {
-        'job_id': 'test-job-001',
-        'query_timestamp': '2025-09-21T19:30:00.000Z',
-        'monthly_stats': [
-            {
-                'year': 2025,
-                'month': 9,
-                'total_reviews': 1500,
-                'avg_rating': 4.2,
-                'positive_count': 1200,
-                'negative_count': 300,
-                'category': '가전디지털'
-            }
-        ],
-        'daily_stats': [
-            {
-                'year': 2025,
-                'month': 9,
-                'day': 21,
-                'total_reviews': 150,
-                'avg_rating': 4.3,
-                'positive_count': 120,
-                'negative_count': 30,
-                'category': '가전디지털'
-            }
-        ]
-    }
+    # Redshift 집계 결과를 XCom에서 수신
+    ti = context["task_instance"]
+    aggregation_data = ti.xcom_pull(task_ids="query_redshift_aggregations", key="aggregation_data")
+    if not aggregation_data:
+        # key 미지정 푸시 대비
+        aggregation_data = ti.xcom_pull(task_ids="query_redshift_aggregations")
     
-    print("[MongoDB] Using test hardcoded data for MongoDB connection test")
-    print(f"[MongoDB] Test data: {aggregation_data}")
+    # 유효성 검사: 실제 데이터가 없으면 실패 처리
+    if not aggregation_data or not isinstance(aggregation_data, dict):
+        raise Exception("[MongoDB] No aggregation_data found in XCom from query_redshift_aggregations")
+    
+    # 최소 필드 검증 및 비어있는 결과 경고
+    job_id = aggregation_data.get("job_id", "unknown")
+    monthly_stats = aggregation_data.get("monthly_stats")
+    daily_stats = aggregation_data.get("daily_stats")
+    print(f"[MongoDB] Received aggregation_data for job_id={job_id} (monthly={len(monthly_stats) if monthly_stats else 0}, daily={len(daily_stats) if daily_stats else 0})")
+    if (not monthly_stats) and (not daily_stats):
+        raise Exception("[MongoDB] Aggregation data is empty (no monthly or daily stats)")
     
     # MongoDB 연결 정보 가져오기 (Airflow Variables 우선 사용)
     mongodb_url = None
