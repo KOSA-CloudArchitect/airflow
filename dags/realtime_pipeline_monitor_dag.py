@@ -132,6 +132,13 @@ def call_crawler_dynamic(**context):
             logging.info(f"[Dynamic Crawler] Response Status: {response.status_code}")
             logging.info(f"[Dynamic Crawler] Response Headers: {dict(response.headers)}")
             logging.info(f"[Dynamic Crawler] Response Body: {response_json}")
+            
+            # 서버에서 processing 상태 반환 시 실패 처리
+            if response_json.get('status') == 'processing':
+                error_message = response_json.get('message', '작업이 이미 실행 중입니다.')
+                logging.error(f"[Dynamic Crawler] Server is processing: {error_message}")
+                raise Exception(f"서버 작업 중: {error_message}")
+                
         except Exception as json_error:
             logging.info(f"[Dynamic Crawler] Response Status: {response.status_code}")
             logging.info(f"[Dynamic Crawler] Response Headers: {dict(response.headers)}")
