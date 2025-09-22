@@ -139,11 +139,16 @@ def call_crawler_dynamic(**context):
                 logging.error(f"[Dynamic Crawler] Server is processing: {error_message}")
                 raise Exception(f"서버 작업 중: {error_message}")
                 
-        except Exception as json_error:
+        except ValueError as json_error:
+            # JSON 파싱 에러만 처리
             logging.info(f"[Dynamic Crawler] Response Status: {response.status_code}")
             logging.info(f"[Dynamic Crawler] Response Headers: {dict(response.headers)}")
             logging.info(f"[Dynamic Crawler] Response Text: {response.text}")
             logging.warning(f"[Dynamic Crawler] Failed to parse JSON response: {json_error}")
+        except Exception as processing_error:
+            # processing 상태나 기타 에러는 다시 발생시킴
+            logging.error(f"[Dynamic Crawler] Task failed: {processing_error}")
+            raise
         
         # 실행 시간 저장 (KST)
         kst = pytz.timezone('Asia/Seoul')
