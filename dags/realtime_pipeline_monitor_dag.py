@@ -291,7 +291,7 @@ with DAG(
             "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}"
         },
         poll_timeout=1,
-        poll_interval=3,  # 3초마다 체크
+        poll_interval=1,  # 3초마다 체크
         execution_timeout=timedelta(minutes=3),
         xcom_push_key="collection_message",
         retries=1,
@@ -312,7 +312,7 @@ with DAG(
             "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}"
         },
         poll_timeout=1,
-        poll_interval=3,
+        poll_interval=1,
         execution_timeout=timedelta(minutes=3),
         xcom_push_key="transform_message",
         retries=1,
@@ -333,7 +333,7 @@ with DAG(
             "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}"
         },
         poll_timeout=1,
-        poll_interval=3,
+        poll_interval=1,
         execution_timeout=timedelta(minutes=5),
         xcom_push_key="analysis_message",
         retries=1,
@@ -354,7 +354,7 @@ with DAG(
             "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}"
         },
         poll_timeout=1,
-        poll_interval=3,
+        poll_interval=1,
         execution_timeout=timedelta(minutes=5),
         xcom_push_key="aggregation_message",
         retries=1,
