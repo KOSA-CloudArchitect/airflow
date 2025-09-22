@@ -288,7 +288,7 @@ with DAG(
             "collection"
         ],
         apply_function_kwargs={
-            "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='get_kst_execution_time', key='kst_execution_time') }}"
+            "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}"
         },
         poll_timeout=1,
         poll_interval=3,  # 3초마다 체크
@@ -309,7 +309,7 @@ with DAG(
             "transform"
         ],
         apply_function_kwargs={
-            "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='get_kst_execution_time', key='kst_execution_time') }}"
+            "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}"
         },
         poll_timeout=1,
         poll_interval=3,
@@ -330,7 +330,7 @@ with DAG(
             "analysis"
         ],
         apply_function_kwargs={
-            "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='get_kst_execution_time', key='kst_execution_time') }}"
+            "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}"
         },
         poll_timeout=1,
         poll_interval=3,
@@ -351,7 +351,7 @@ with DAG(
             "aggregation"
         ],
         apply_function_kwargs={
-            "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='get_kst_execution_time', key='kst_execution_time') }}"
+            "min_timestamp_iso": "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}"
         },
         poll_timeout=1,
         poll_interval=3,
