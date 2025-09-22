@@ -6,7 +6,8 @@ import json, logging
 
 def send_to_kafka(**context):
     """Kafka에 메시지를 직접 발행하는 함수"""
-    conf = {"bootstrap.servers": "PLAINTEXT://kafka:9092"}  # Airflow Connection 말고 직접 지정
+    # Kubernetes 환경에서 정확한 Kafka 서비스 주소 사용
+    conf = {"bootstrap.servers": "PLAINTEXT://my-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"}
     producer = Producer(conf)
 
     ti = context["ti"]
@@ -82,3 +83,5 @@ with DAG(
     )
 
     prepare_summary_message >> publish_to_kafka
+
+
