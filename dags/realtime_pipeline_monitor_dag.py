@@ -284,7 +284,7 @@ with DAG(
         topics=["job-control-topic"],
         apply_function="include.kafka_filters.control_message_check",
         apply_function_args=[
-            "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}",
+            "{{ dag_run.conf['job_id'] }}",
             "collection"
         ],
         poll_timeout=1,
@@ -302,7 +302,7 @@ with DAG(
         topics=["job-control-topic"],
         apply_function="include.kafka_filters.control_message_check",
         apply_function_args=[
-            "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}",
+            "{{ dag_run.conf['job_id'] }}",
             "transform"
         ],
         poll_timeout=1,
@@ -320,7 +320,7 @@ with DAG(
         topics=["job-control-topic"],
         apply_function="include.kafka_filters.control_message_check",
         apply_function_args=[
-            "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}",
+            "{{ dag_run.conf['job_id'] }}",
             "analysis"
         ],
         poll_timeout=1,
@@ -338,7 +338,7 @@ with DAG(
         topics=["job-control-topic"],
         apply_function="include.kafka_filters.control_message_check",
         apply_function_args=[
-            "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}",
+            "{{ dag_run.conf['job_id'] }}",
             "aggregation"
         ],
         poll_timeout=1,
@@ -354,7 +354,7 @@ with DAG(
         task_id="trigger_redshift_dag",
         trigger_dag_id="redshift_s3_copy_minimal",
         conf={
-            'job_id': "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}",
+            'job_id': "{{ dag_run.conf['job_id'] }}",
             'execution_time': "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}",
             'dag_run_id': "{{ dag_run.run_id }}",
             'source_dag': 'realtime_pipeline_monitor',
@@ -370,7 +370,7 @@ with DAG(
         task_id="trigger_summary_dag",
         trigger_dag_id="summary_analysis_request_dag",
         conf={
-            'job_id': "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}",
+            'job_id': "{{ dag_run.conf['job_id'] }}",
             'execution_time': "{{ ti.xcom_pull(task_ids='get_kst_execution_time', key='kst_execution_time') }}",
             'copy_completion_time': "{{ ti.xcom_pull(task_ids='call_crawler', key='crawler_execution_time') }}",
             'source_dag': 'realtime_pipeline_monitor',
