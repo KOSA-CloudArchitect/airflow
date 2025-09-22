@@ -229,6 +229,7 @@ def get_s3_files_all(**context) -> List[str]:
 def query_redshift_aggregations(**context) -> Dict[str, Any]:
     """Redshift에서 job_id 기준으로 월별/일별 집계 데이터 조회"""
     from airflow.providers.amazon.aws.hooks.redshift_data import RedshiftDataHook
+    import time
     
     # 트리거 데이터에서 job_id 가져오기
     trigger_data = context['task_instance'].xcom_pull(task_ids='extract_trigger_data')
@@ -238,6 +239,45 @@ def query_redshift_aggregations(**context) -> Dict[str, Any]:
     
     # Redshift 연결
     redshift_hook = RedshiftDataHook()
+
+    client = redshift_hook.conn  # boto3 redshift-data client
+
+    def execute_and_fetch(sql: str):
+        """Data API로 쿼리 실행 후 결과를 [ {col:value}, ... ] 형태로 반환"""
+        stmt = client.execute_statement(
+            WorkgroupName='hihypipe-redshift-workgroup',
+            Database='hihypipe',
+            Sql=sql,
+        )
+        statement_id = stmt['Id']
+        # poll
+        while True:
+            desc = client.describe_statement(Id=statement_id)
+            status = desc.get('Status')
+            if status in {'FAILED', 'ABORTED'}:
+                raise Exception(f"Redshift Data API statement failed: {desc}")
+            if status == 'FINISHED':
+                break
+            time.sleep(2)
+        # fetch
+        result = client.get_statement_result(Id=statement_id)
+        cols = [c.get('name') for c in result.get('ColumnMetadata', [])]
+        rows = []
+        for rec in result.get('Records', []) or []:
+            values = []
+            for f in rec:
+                if 'stringValue' in f:
+                    values.append(f['stringValue'])
+                elif 'longValue' in f:
+                    values.append(f['longValue'])
+                elif 'doubleValue' in f:
+                    values.append(f['doubleValue'])
+                elif 'booleanValue' in f:
+                    values.append(f['booleanValue'])
+                else:
+                    values.append(None)
+            rows.append(dict(zip(cols, values)))
+        return rows
     
     # 월별 집계 쿼리 (JSON 구조에 맞춤)
     monthly_query = f"""
@@ -249,7 +289,7 @@ def query_redshift_aggregations(**context) -> Dict[str, Any]:
         COUNT(CASE WHEN sentiment = '부정' THEN 1 END) as negative_reviews,
         COUNT(CASE WHEN sentiment = '중립' THEN 1 END) as neutral_reviews
     FROM public.realtime_review_collection 
-    WHERE job_id = '{job_id}'
+    WHERE TRIM(job_id) = '{job_id}'
     GROUP BY yyyymm
     ORDER BY yyyymm;
     """
@@ -264,28 +304,19 @@ def query_redshift_aggregations(**context) -> Dict[str, Any]:
         COUNT(CASE WHEN sentiment = '부정' THEN 1 END) as negative_reviews,
         COUNT(CASE WHEN sentiment = '중립' THEN 1 END) as neutral_reviews
     FROM public.realtime_review_collection 
-    WHERE job_id = '{job_id}'
+    WHERE TRIM(job_id) = '{job_id}'
     GROUP BY yyyymmdd
     ORDER BY yyyymmdd;
     """
     
     try:
-        # 쿼리 실행
-        monthly_result = redshift_hook.execute_query(
-            workgroup_name='hihypipe-redshift-workgroup',
-            database='hihypipe',
-            sql=monthly_query
-        )
-        
-        daily_result = redshift_hook.execute_query(
-            workgroup_name='hihypipe-redshift-workgroup',
-            database='hihypipe',
-            sql=daily_query
-        )
-        
-        # 결과 정리 (QueryExecutionOutput에서 실제 데이터 추출)
-        monthly_data = monthly_result.records if hasattr(monthly_result, 'records') else []
-        daily_data = daily_result.records if hasattr(daily_result, 'records') else []
+        # 진단: 전체 카운트
+        count_rows = execute_and_fetch(f"SELECT COUNT(*) AS cnt FROM public.realtime_review_collection WHERE TRIM(job_id) = '{job_id}'")
+        print(f"[Redshift Query] Row count for job_id={job_id}: {count_rows}")
+
+        # 집계 실행 및 결과 변환
+        monthly_data = execute_and_fetch(monthly_query)
+        daily_data = execute_and_fetch(daily_query)
         
         aggregation_data = {
             'job_id': job_id,
