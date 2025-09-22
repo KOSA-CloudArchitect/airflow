@@ -2,6 +2,7 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 try:
     from airflow.providers.apache.kafka.sensors.kafka import AwaitMessageSensor
+    
 except ImportError:
     try:
         from airflow.providers.apache.kafka.sensors.await_message import AwaitMessageSensor
@@ -112,6 +113,6 @@ with DAG(
         on_failure_callback=handle_summary_failure
     )
 
-    prepare_summary_message >> publish_to_kafka >> wait_summary_completion
+    prepare_summary_message >> [publish_to_kafka, wait_summary_completion]
 
 
