@@ -410,24 +410,50 @@ def save_to_mongodb(**context) -> None:
     
     try:
         # MongoDB 연결
+        print(f"[MongoDB] Attempting to connect to: {mongodb_uri}")
         client = MongoClient(mongodb_uri)
+        
+        # 연결 테스트
+        client.admin.command('ping')
+        print("[MongoDB] Connection successful!")
+        
         db = client[mongodb_database]
         collection = db[mongodb_collection]
         
+        # 컬렉션 존재 여부 확인
+        collections = db.list_collection_names()
+        print(f"[MongoDB] Available collections: {collections}")
+        
+        # 데이터 저장 전 현재 데이터 확인
+        existing_data = collection.find_one({'job_id': aggregation_data['job_id']})
+        print(f"[MongoDB] Existing data for job_id {aggregation_data['job_id']}: {existing_data}")
+        
         # 데이터 저장 (upsert 방식으로 job_id 기준)
+        print(f"[MongoDB] Saving data: {aggregation_data}")
         result = collection.replace_one(
             {'job_id': aggregation_data['job_id']},
             aggregation_data,
             upsert=True
         )
         
-        print(f"[MongoDB] Data saved successfully. Job ID: {aggregation_data['job_id']}, Operation: {result.upserted_id or 'updated'}")
+        print(f"[MongoDB] Replace result - matched: {result.matched_count}, modified: {result.modified_count}, upserted_id: {result.upserted_id}")
+        
+        # 저장 후 데이터 확인
+        saved_data = collection.find_one({'job_id': aggregation_data['job_id']})
+        print(f"[MongoDB] Data after save: {saved_data}")
+        
+        # 컬렉션의 전체 문서 수 확인
+        total_count = collection.count_documents({})
+        print(f"[MongoDB] Total documents in collection: {total_count}")
         
         # 연결 종료
         client.close()
+        print("[MongoDB] Connection closed successfully")
         
     except Exception as e:
         print(f"[MongoDB] Error saving data: {e}")
+        import traceback
+        print(f"[MongoDB] Traceback: {traceback.format_exc()}")
         raise
 
 
