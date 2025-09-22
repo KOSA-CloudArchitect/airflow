@@ -442,10 +442,26 @@ def save_to_mongodb(**context) -> None:
         raise
 
 
-# 1. 실행 날짜 문자열 생성
+def get_conf_execution_date_str(**context):
+    """Trigger conf의 execution_time(ISO)을 기반으로 YYYYMMDD 생성하여 XCom에 저장"""
+    dag_run = context.get('dag_run')
+    conf = dag_run.conf if dag_run and dag_run.conf else {}
+    execution_time_str = conf.get('execution_time')
+    if not execution_time_str:
+        # fallback: data_interval_start (UTC)
+        execution_time = context['data_interval_start']
+    else:
+        # ISO 문자열을 timezone-aware datetime으로 파싱
+        execution_time = datetime.fromisoformat(execution_time_str.replace('Z', '+00:00'))
+    date_str = execution_time.strftime('%Y%m%d')
+    context['task_instance'].xcom_push(key='execution_date_str', value=date_str)
+    print(f"[Date Processing] Conf-based execution date string: {date_str}")
+    return date_str
+
+# 1. 실행 날짜 문자열 생성 (conf 기반)
 get_execution_date = PythonOperator(
     task_id='get_execution_date_str',
-    python_callable=get_execution_date_str,
+    python_callable=get_conf_execution_date_str,
     dag=dag
 )
 
