@@ -126,6 +126,18 @@ def call_crawler_dynamic(**context):
         response = requests.post(url, json=request_data, headers=headers, timeout=30)
         response.raise_for_status()
         
+        # 응답 내용 로그 출력
+        try:
+            response_json = response.json()
+            logging.info(f"[Dynamic Crawler] Response Status: {response.status_code}")
+            logging.info(f"[Dynamic Crawler] Response Headers: {dict(response.headers)}")
+            logging.info(f"[Dynamic Crawler] Response Body: {response_json}")
+        except Exception as json_error:
+            logging.info(f"[Dynamic Crawler] Response Status: {response.status_code}")
+            logging.info(f"[Dynamic Crawler] Response Headers: {dict(response.headers)}")
+            logging.info(f"[Dynamic Crawler] Response Text: {response.text}")
+            logging.warning(f"[Dynamic Crawler] Failed to parse JSON response: {json_error}")
+        
         # 실행 시간 저장 (KST)
         kst = pytz.timezone('Asia/Seoul')
         execution_time_kst = datetime.now(kst)
@@ -136,7 +148,6 @@ def call_crawler_dynamic(**context):
             value=execution_time_kst.isoformat()
         )
         
-        logging.info(f"[Dynamic Crawler] Response: {response.status_code}")
         print(f"✅ Crawler request completed successfully", flush=True)
         
         return {
