@@ -113,6 +113,6 @@ with DAG(
         on_failure_callback=handle_summary_failure
     )
 
-    prepare_summary_message >> [publish_to_kafka, wait_summary_completion]
+    prepare_summary_message >> publish_to_kafka
 
 
