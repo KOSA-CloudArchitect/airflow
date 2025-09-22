@@ -368,7 +368,7 @@ with DAG(
     # 8. Summary Analysis DAG 트리거 (병렬 실행)
     trigger_summary_dag = TriggerDagRunOperator(
         task_id="trigger_summary_dag",
-        trigger_dag_id="summary_analysis_dag_simple",
+        trigger_dag_id="summary_analysis_request_dag",
         conf={
             'job_id': "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}",
             'execution_time': "{{ ti.xcom_pull(task_ids='get_kst_execution_time', key='kst_execution_time') }}",
