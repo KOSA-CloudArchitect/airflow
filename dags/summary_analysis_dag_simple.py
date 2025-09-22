@@ -1,6 +1,12 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.providers.apache.kafka.sensors.await_message import AwaitMessageSensor
+try:
+    from airflow.providers.apache.kafka.sensors.kafka import AwaitMessageSensor
+except ImportError:
+    try:
+        from airflow.providers.apache.kafka.sensors.await_message import AwaitMessageSensor
+    except ImportError:
+        from airflow.providers.apache.kafka.sensors import AwaitMessageSensor
 from datetime import datetime, timedelta
 from confluent_kafka import Producer
 import json, logging
@@ -99,7 +105,7 @@ with DAG(
             "summary"
         ],
         poll_timeout=1,
-        poll_interval=30,  # 30초마다 체크
+        poll_interval=10,  # 30초마다 체크
         execution_timeout=timedelta(minutes=30),  # 30분 타임아웃
         xcom_push_key="summary_completion_message",
         retries=0,
