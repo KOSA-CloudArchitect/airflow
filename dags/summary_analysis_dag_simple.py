@@ -1,5 +1,6 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.providers.apache.kafka.sensors.await_message import AwaitMessageSensor
 from datetime import datetime, timedelta
 from confluent_kafka import Producer
 import json, logging
@@ -63,6 +64,11 @@ def prepare_summary_request_message(**context):
     logging.info(f"[Summary Message] Prepared message: {summary_message}")
     return summary_message
 
+def handle_summary_failure(context):
+    """요약 실패 시 처리 함수"""
+    logging.error(f"[Summary Failure] Summary processing failed: {context}")
+    # 필요시 알림이나 재시도 로직 추가 가능
+
 with DAG(
     dag_id="summary_analysis_dag_simple",
     start_date=datetime(2025, 1, 1),
@@ -82,6 +88,24 @@ with DAG(
         python_callable=send_to_kafka,
     )
 
-    prepare_summary_message >> publish_to_kafka
+    # Kafka 센싱 태스크 추가 - 요약 완료 메시지 대기
+    wait_summary_completion = AwaitMessageSensor(
+        task_id="wait_summary_completion",
+        kafka_config_id="job-control-topic-overall",
+        topics=["job-control-topic"],
+        apply_function="include.kafka_filters.control_message_check",
+        apply_function_args=[
+            "{{ dag_run.conf.get('job_id') if dag_run and dag_run.conf else run_id }}",
+            "summary"
+        ],
+        poll_timeout=1,
+        poll_interval=30,  # 30초마다 체크
+        execution_timeout=timedelta(minutes=30),  # 30분 타임아웃
+        xcom_push_key="summary_completion_message",
+        retries=0,
+        on_failure_callback=handle_summary_failure
+    )
+
+    prepare_summary_message >> publish_to_kafka >> wait_summary_completion
 
 
