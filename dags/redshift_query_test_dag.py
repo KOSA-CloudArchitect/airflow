@@ -1,6 +1,8 @@
 from datetime import datetime
 from airflow import DAG
 from airflow.providers.amazon.aws.operators.redshift_data import RedshiftDataOperator
+from airflow.operators.python import PythonOperator
+from airflow.providers.amazon.aws.hooks.redshift_data import RedshiftDataHook
 
 
 with DAG(
@@ -48,6 +50,46 @@ with DAG(
         sql=daily_agg_query,
     )
 
-    count_rows >> daily_agg
+    def print_query_results(sql: str, max_rows: int = 50, **_):
+        hook = RedshiftDataHook()
+        stmt = hook.execute_query(
+            workgroup_name="hihypipe-redshift-workgroup",
+            database="hihypipe",
+            sql=sql,
+        )
+        result = hook.get_query_results(stmt.id)
+        # 컬럼명 추출
+        cols = [c.name for c in getattr(result, "column_metadata", [])]
+        print(f"[TEST] Columns: {cols}")
+        rows = getattr(result, "records", []) or []
+        print(f"[TEST] Row count (capped to print): {len(rows)}")
+        for i, rec in enumerate(rows[:max_rows]):
+            values = []
+            for f in rec:
+                if f.string_value is not None:
+                    values.append(f.string_value)
+                elif f.long_value is not None:
+                    values.append(f.long_value)
+                elif f.double_value is not None:
+                    values.append(f.double_value)
+                elif f.boolean_value is not None:
+                    values.append(f.boolean_value)
+                else:
+                    values.append(None)
+            print(f"[TEST] Row {i}: {values}")
+
+    print_count = PythonOperator(
+        task_id="print_count",
+        python_callable=print_query_results,
+        op_kwargs={"sql": count_query, "max_rows": 5},
+    )
+
+    print_daily = PythonOperator(
+        task_id="print_daily",
+        python_callable=print_query_results,
+        op_kwargs={"sql": daily_agg_query, "max_rows": 50},
+    )
+
+    count_rows >> daily_agg >> [print_count, print_daily]
 
 
