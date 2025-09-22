@@ -57,23 +57,25 @@ with DAG(
             database="hihypipe",
             sql=sql,
         )
-        result = hook.get_query_results(stmt.id)
-        # 컬럼명 추출
-        cols = [c.name for c in getattr(result, "column_metadata", [])]
+        # boto3 Redshift Data API 클라이언트 사용
+        client = hook.conn  # boto3 client('redshift-data')
+        resp = client.get_statement_result(Id=stmt.id)
+
+        cols = [c.get("name") for c in resp.get("ColumnMetadata", [])]
         print(f"[TEST] Columns: {cols}")
-        rows = getattr(result, "records", []) or []
-        print(f"[TEST] Row count (capped to print): {len(rows)}")
-        for i, rec in enumerate(rows[:max_rows]):
+        records = resp.get("Records", []) or []
+        print(f"[TEST] Row count (capped to print): {len(records)}")
+        for i, rec in enumerate(records[:max_rows]):
             values = []
             for f in rec:
-                if f.string_value is not None:
-                    values.append(f.string_value)
-                elif f.long_value is not None:
-                    values.append(f.long_value)
-                elif f.double_value is not None:
-                    values.append(f.double_value)
-                elif f.boolean_value is not None:
-                    values.append(f.boolean_value)
+                if "stringValue" in f:
+                    values.append(f["stringValue"])
+                elif "longValue" in f:
+                    values.append(f["longValue"])
+                elif "doubleValue" in f:
+                    values.append(f["doubleValue"])
+                elif "booleanValue" in f:
+                    values.append(f["booleanValue"])
                 else:
                     values.append(None)
             print(f"[TEST] Row {i}: {values}")
